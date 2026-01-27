@@ -933,10 +933,7 @@ app.get('/', (c) => {
                 emrSection.classList.add('hidden');
             });
             
-            // ===== EMR 섹션 스크립트 =====
-            
-            // EMR 업로드 폼 처리 (기존 코드 유지)
-            document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+            // ===== EMR 섹션 스크립트는 위에 이미 있음 =====
         </script>
     </body>
     </html>
