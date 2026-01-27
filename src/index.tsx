@@ -655,11 +655,18 @@ app.get('/', (c) => {
                             </div>
                         </div>
 
-                        <button id="ecountSearchBtn" 
-                                class="w-full bg-green-600 text-white py-3 px-6 rounded-lg hover:bg-green-700 transition-colors mb-4">
-                            <i class="fas fa-search mr-2"></i>
-                            조회
-                        </button>
+                        <div class="flex space-x-4 mb-4">
+                            <button id="ecountSearchBtn" 
+                                    class="flex-1 bg-green-600 text-white py-3 px-6 rounded-lg hover:bg-green-700 transition-colors">
+                                <i class="fas fa-search mr-2"></i>
+                                조회
+                            </button>
+                            <button id="ecountDeleteSelectedBtn" 
+                                    class="bg-red-600 text-white py-3 px-6 rounded-lg hover:bg-red-700 transition-colors">
+                                <i class="fas fa-trash mr-2"></i>
+                                선택 삭제 (<span id="selectedCount">0</span>)
+                            </button>
+                        </div>
 
                         <div class="mb-2 text-sm text-gray-600">
                             조회 결과: <span id="ecountCount" class="font-bold">0</span>건 (총 <span id="ecountTotal" class="font-bold">0</span>건)
@@ -669,6 +676,9 @@ app.get('/', (c) => {
                             <table class="min-w-full bg-white border border-gray-300">
                                 <thead class="bg-gray-100">
                                     <tr>
+                                        <th class="px-4 py-3 border-b text-center text-sm font-semibold text-gray-700">
+                                            <input type="checkbox" id="selectAllEcount" class="w-4 h-4 cursor-pointer">
+                                        </th>
                                         <th class="px-4 py-3 border-b text-left text-sm font-semibold text-gray-700">구매처명</th>
                                         <th class="px-4 py-3 border-b text-left text-sm font-semibold text-gray-700">대분류</th>
                                         <th class="px-4 py-3 border-b text-left text-sm font-semibold text-gray-700">중분류</th>
@@ -681,7 +691,7 @@ app.get('/', (c) => {
                                 </thead>
                                 <tbody id="ecountTableBody">
                                     <tr>
-                                        <td colspan="8" class="px-4 py-8 text-center text-gray-500">
+                                        <td colspan="9" class="px-4 py-8 text-center text-gray-500">
                                             조회 버튼을 클릭하여 데이터를 확인하세요
                                         </td>
                                     </tr>
@@ -693,6 +703,89 @@ app.get('/', (c) => {
                     </div>
                 </div>
             </main>
+
+            <!-- 수정 모달 -->
+            <div id="editModal" class="fixed inset-0 bg-gray-800 bg-opacity-50 hidden flex items-center justify-center z-50">
+                <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+                    <h3 class="text-2xl font-bold text-gray-800 mb-4">
+                        <i class="fas fa-edit mr-2"></i>
+                        품목 수정
+                    </h3>
+                    
+                    <form id="editForm" class="space-y-4">
+                        <input type="hidden" id="editId">
+                        
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">구매처명</label>
+                                <input type="text" id="editSupplierName" 
+                                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+                            </div>
+                            
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">품목코드</label>
+                                <input type="text" id="editProductCode" 
+                                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+                            </div>
+                            
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">대분류</label>
+                                <input type="text" id="editCategoryLarge" 
+                                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+                            </div>
+                            
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">중분류</label>
+                                <input type="text" id="editCategoryMedium" 
+                                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+                            </div>
+                            
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">소분류</label>
+                                <input type="text" id="editCategorySmall" 
+                                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+                            </div>
+                            
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">품목명 *</label>
+                                <input type="text" id="editProductName" required
+                                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+                            </div>
+                            
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">규격</label>
+                                <input type="text" id="editSpecification" 
+                                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+                            </div>
+                            
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">단위</label>
+                                <input type="text" id="editUnit" 
+                                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+                            </div>
+                            
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">입고단가</label>
+                                <input type="number" id="editUnitPrice" 
+                                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+                            </div>
+                        </div>
+                        
+                        <div class="flex space-x-4 pt-4">
+                            <button type="submit" 
+                                    class="flex-1 bg-blue-600 text-white py-3 px-6 rounded-lg hover:bg-blue-700 transition-colors">
+                                <i class="fas fa-save mr-2"></i>
+                                저장
+                            </button>
+                            <button type="button" onclick="closeEditModal()" 
+                                    class="flex-1 bg-gray-500 text-white py-3 px-6 rounded-lg hover:bg-gray-600 transition-colors">
+                                <i class="fas fa-times mr-2"></i>
+                                취소
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -1037,7 +1130,7 @@ app.get('/', (c) => {
             if (products.length === 0) {
                 tableBody.innerHTML = \`
                     <tr>
-                        <td colspan="8" class="px-4 py-8 text-center text-gray-500">
+                        <td colspan="9" class="px-4 py-8 text-center text-gray-500">
                             조회된 데이터가 없습니다
                         </td>
                     </tr>
@@ -1046,7 +1139,10 @@ app.get('/', (c) => {
             }
             
             tableBody.innerHTML = products.map(p => \`
-                <tr class="border-b hover:bg-gray-50">
+                <tr class="border-b hover:bg-gray-50 product-row" data-id="\${p.id}">
+                    <td class="px-4 py-3 text-center">
+                        <input type="checkbox" class="product-checkbox w-4 h-4 cursor-pointer" value="\${p.id}">
+                    </td>
                     <td class="px-4 py-3">\${p.supplier_name || '-'}</td>
                     <td class="px-4 py-3">\${p.category_large || '-'}</td>
                     <td class="px-4 py-3">\${p.category_medium || '-'}</td>
@@ -1055,6 +1151,10 @@ app.get('/', (c) => {
                     <td class="px-4 py-3">\${p.product_name || '-'}</td>
                     <td class="px-4 py-3">\${p.unit_price ? p.unit_price.toLocaleString() + '원' : '-'}</td>
                     <td class="px-4 py-3">
+                        <button onclick="openEditModal(\${p.id})" 
+                                class="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600 text-sm mr-2">
+                            <i class="fas fa-edit"></i>
+                        </button>
                         <button onclick="deleteEcountProduct(\${p.id})" 
                                 class="bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600 text-sm">
                             <i class="fas fa-trash"></i>
@@ -1062,6 +1162,15 @@ app.get('/', (c) => {
                     </td>
                 </tr>
             \`).join('');
+            
+            // 체크박스 이벤트 리스너 추가
+            updateSelectedCount();
+            document.querySelectorAll('.product-checkbox').forEach(checkbox => {
+                checkbox.addEventListener('change', updateSelectedCount);
+            });
+            
+            // 드래그 선택 기능
+            enableDragSelection();
         }
 
         function displayPagination(totalPages) {
@@ -1108,6 +1217,151 @@ app.get('/', (c) => {
                 alert('삭제 중 오류가 발생했습니다: ' + err.message);
             }
         }
+
+        // 전체 선택
+        document.getElementById('selectAllEcount').addEventListener('change', function() {
+            const checkboxes = document.querySelectorAll('.product-checkbox');
+            checkboxes.forEach(cb => {
+                cb.checked = this.checked;
+            });
+            updateSelectedCount();
+        });
+
+        // 선택 개수 업데이트
+        function updateSelectedCount() {
+            const selectedIds = Array.from(document.querySelectorAll('.product-checkbox:checked')).map(cb => cb.value);
+            document.getElementById('selectedCount').textContent = selectedIds.length;
+        }
+
+        // 드래그 선택 기능
+        function enableDragSelection() {
+            let isDragging = false;
+            let startCheckbox = null;
+            
+            const checkboxes = document.querySelectorAll('.product-checkbox');
+            
+            checkboxes.forEach(checkbox => {
+                checkbox.parentElement.addEventListener('mousedown', (e) => {
+                    if (e.target.tagName !== 'INPUT') return;
+                    isDragging = true;
+                    startCheckbox = e.target;
+                    e.preventDefault();
+                });
+            });
+            
+            document.addEventListener('mouseover', (e) => {
+                if (!isDragging) return;
+                if (e.target.classList.contains('product-checkbox')) {
+                    e.target.checked = startCheckbox.checked;
+                    updateSelectedCount();
+                }
+            });
+            
+            document.addEventListener('mouseup', () => {
+                isDragging = false;
+                startCheckbox = null;
+            });
+        }
+
+        // 일괄 삭제
+        document.getElementById('ecountDeleteSelectedBtn').addEventListener('click', async () => {
+            const selectedIds = Array.from(document.querySelectorAll('.product-checkbox:checked')).map(cb => parseInt(cb.value));
+            
+            if (selectedIds.length === 0) {
+                alert('삭제할 품목을 선택해주세요.');
+                return;
+            }
+            
+            if (!confirm(\`선택한 \${selectedIds.length}개의 품목을 삭제하시겠습니까?\`)) return;
+            
+            try {
+                let successCount = 0;
+                for (const id of selectedIds) {
+                    const response = await axios.delete(\`/api/ecount/products/\${id}\`);
+                    if (response.data.success) successCount++;
+                }
+                
+                alert(\`\${successCount}개의 품목이 삭제되었습니다.\`);
+                searchEcountProducts();
+            } catch (err) {
+                alert('삭제 중 오류가 발생했습니다: ' + err.message);
+            }
+        });
+
+        // 수정 모달 열기
+        let currentProducts = [];
+        
+        async function openEditModal(id) {
+            // 현재 조회된 제품 목록에서 찾기
+            const params = new URLSearchParams();
+            params.append('page', '1');
+            params.append('page_size', '10000'); // 전체 조회
+            
+            try {
+                const response = await axios.get(\`/api/ecount/products?\${params}\`);
+                if (response.data.success) {
+                    currentProducts = response.data.products;
+                    const product = currentProducts.find(p => p.id === id);
+                    
+                    if (!product) {
+                        alert('품목을 찾을 수 없습니다.');
+                        return;
+                    }
+                    
+                    document.getElementById('editId').value = product.id;
+                    document.getElementById('editSupplierName').value = product.supplier_name || '';
+                    document.getElementById('editProductCode').value = product.product_code || '';
+                    document.getElementById('editCategoryLarge').value = product.category_large || '';
+                    document.getElementById('editCategoryMedium').value = product.category_medium || '';
+                    document.getElementById('editCategorySmall').value = product.category_small || '';
+                    document.getElementById('editProductName').value = product.product_name || '';
+                    document.getElementById('editSpecification').value = product.specification || '';
+                    document.getElementById('editUnit').value = product.unit || '';
+                    document.getElementById('editUnitPrice').value = product.unit_price || 0;
+                    
+                    document.getElementById('editModal').classList.remove('hidden');
+                }
+            } catch (err) {
+                alert('품목 정보를 불러오는 중 오류가 발생했습니다: ' + err.message);
+            }
+        }
+
+        // 수정 모달 닫기
+        function closeEditModal() {
+            document.getElementById('editModal').classList.add('hidden');
+        }
+
+        // 수정 폼 제출
+        document.getElementById('editForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const id = document.getElementById('editId').value;
+            const data = {
+                supplier_name: document.getElementById('editSupplierName').value || null,
+                product_code: document.getElementById('editProductCode').value || null,
+                category_large: document.getElementById('editCategoryLarge').value || null,
+                category_medium: document.getElementById('editCategoryMedium').value || null,
+                category_small: document.getElementById('editCategorySmall').value || null,
+                product_name: document.getElementById('editProductName').value,
+                specification: document.getElementById('editSpecification').value || null,
+                unit: document.getElementById('editUnit').value || null,
+                unit_price: parseFloat(document.getElementById('editUnitPrice').value) || 0,
+            };
+            
+            try {
+                const response = await axios.put(\`/api/ecount/products/\${id}\`, data);
+                
+                if (response.data.success) {
+                    alert('수정되었습니다.');
+                    closeEditModal();
+                    searchEcountProducts();
+                } else {
+                    alert('수정에 실패했습니다: ' + response.data.message);
+                }
+            } catch (err) {
+                alert('수정 중 오류가 발생했습니다: ' + err.message);
+            }
+        });
     </script>
 </body>
 </html>
