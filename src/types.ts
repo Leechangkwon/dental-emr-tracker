@@ -23,6 +23,7 @@ export interface BoneGraft {
   quantity: number;
   amount: number;
   supplier?: string;
+  reference_tooth?: string; // 참조 치식 (예: #26)
 }
 
 // 임플란트 타입

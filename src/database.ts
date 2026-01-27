@@ -121,8 +121,8 @@ export async function saveBoneGraftRecords(
 
       await db
         .prepare(
-          `INSERT INTO bone_graft (treatment_record_id, date, product_name, quantity, amount, supplier)
-           VALUES (?, ?, ?, ?, ?, ?)`
+          `INSERT INTO bone_graft (treatment_record_id, date, product_name, quantity, amount, supplier, reference_tooth)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
         )
         .bind(
           mainTreatmentId,
@@ -130,7 +130,8 @@ export async function saveBoneGraftRecords(
           productName,
           quantity,
           0, // 금액은 현재 0 (향후 확장)
-          supplier
+          supplier,
+          null // 대표 치식은 참조 없음
         )
         .run();
 
@@ -147,23 +148,36 @@ export async function saveBoneGraftRecords(
         teeth[i]
       );
 
-      // 참조 메시지 저장
-      await db
-        .prepare(
-          `INSERT INTO bone_graft (treatment_record_id, date, product_name, quantity, amount, supplier)
-           VALUES (?, ?, ?, ?, ?, ?)`
-        )
-        .bind(
-          refTreatmentId,
-          record.date,
-          `#${representativeTooth}에 합산됨`,
-          0,
-          0,
-          '참조'
-        )
-        .run();
+      // 각 품목별로 참조 레코드 생성
+      for (const [productName, quantity] of record.products.entries()) {
+        // 거래처 결정
+        let supplier = '기타/미지정';
+        for (const [key, value] of Object.entries(VENDOR_MAP)) {
+          if (productName.toUpperCase().includes(key.toUpperCase())) {
+            supplier = value;
+            break;
+          }
+        }
 
-      count++;
+        // 실제 품목명과 거래처로 저장, 수량 0, reference_tooth 추가
+        await db
+          .prepare(
+            `INSERT INTO bone_graft (treatment_record_id, date, product_name, quantity, amount, supplier, reference_tooth)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`
+          )
+          .bind(
+            refTreatmentId,
+            record.date,
+            productName,
+            0, // 수량 0
+            0,
+            supplier,
+            `#${representativeTooth}` // 참조 치식
+          )
+          .run();
+
+        count++;
+      }
     }
   }
 
