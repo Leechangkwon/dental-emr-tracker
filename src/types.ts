@@ -65,3 +65,22 @@ export interface TreatmentView {
   created_at: string;
   updated_at: string;
 }
+
+// 이카운트 품목 타입
+export interface EcountProduct {
+  id?: number;
+  supplier_name?: string;          // 구매처명
+  image_url?: string;               // 이미지
+  category_large?: string;          // 대분류
+  category_medium?: string;         // 중분류
+  category_small?: string;          // 소분류
+  product_code?: string;            // 품목코드
+  product_name: string;             // 품목명 (필수)
+  specification?: string;           // 규격
+  unit?: string;                    // 단위
+  unit_price?: number;              // 입고단가
+  quantity_numerator?: number;      // 당수량(분자)
+  quantity_denominator?: number;    // 당수량(분모)
+  created_at?: string;
+  updated_at?: string;
+}
