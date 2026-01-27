@@ -3,7 +3,7 @@ import { cors } from 'hono/cors';
 import * as XLSX from 'xlsx';
 import { Bindings } from './types';
 import { parseInsuranceData, parseSurgeryImplant, parseSurgeryBone } from './parser';
-import { saveImplantRecords, saveBoneGraftRecords, queryTreatmentRecords, deleteTreatmentRecord, updateBoneGraft, updateImplant } from './database';
+import { saveImplantRecords, saveBoneGraftRecords, queryTreatmentRecords, deleteTreatmentRecord, deleteTreatmentRecordsBatch, updateBoneGraft, updateImplant } from './database';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -177,6 +177,39 @@ app.delete('/api/records/:id', async (c) => {
     return c.json({
       success: false,
       message: `삭제 중 오류: ${err}`
+    }, 500);
+  }
+});
+
+/**
+ * 여러 치료 기록 일괄 삭제 API
+ * POST /api/records/batch-delete
+ */
+app.post('/api/records/batch-delete', async (c) => {
+  try {
+    const { record_ids } = await c.req.json();
+    
+    if (!record_ids || !Array.isArray(record_ids) || record_ids.length === 0) {
+      return c.json({
+        success: false,
+        message: '삭제할 레코드 ID를 제공해주세요.'
+      }, 400);
+    }
+    
+    const db = c.env.DB;
+    const result = await deleteTreatmentRecordsBatch(db, record_ids);
+    
+    return c.json({
+      success: true,
+      message: `${result.success}개의 레코드가 삭제되었습니다.${result.failed > 0 ? ` (실패: ${result.failed}개)` : ''}`,
+      deleted: result.success,
+      failed: result.failed
+    });
+  } catch (err) {
+    console.error('Batch delete error:', err);
+    return c.json({
+      success: false,
+      message: `일괄 삭제 중 오류: ${err}`
     }, 500);
   }
 });
@@ -433,11 +466,18 @@ app.get('/', (c) => {
                 <!-- 결과 테이블 -->
                 <div class="bg-white rounded-lg shadow-md p-6">
                     <div class="flex justify-between items-center mb-4">
-                        <h2 class="text-2xl font-bold text-gray-800">
-                            <i class="fas fa-table mr-2"></i>
-                            치료 기록
-                        </h2>
-                        <span id="recordCount" class="text-gray-600"></span>
+                        <div>
+                            <h2 class="text-2xl font-bold text-gray-800">
+                                <i class="fas fa-table mr-2"></i>
+                                치료 기록
+                            </h2>
+                            <span id="recordCount" class="text-gray-600 text-sm"></span>
+                        </div>
+                        <button id="deleteAllBtn" 
+                                class="hidden bg-red-600 text-white py-2 px-4 rounded-lg hover:bg-red-700 transition-colors">
+                            <i class="fas fa-trash-alt mr-2"></i>
+                            조회 결과 전체 삭제
+                        </button>
                     </div>
 
                     <div class="overflow-x-auto">
@@ -561,8 +601,12 @@ app.get('/', (c) => {
             });
             
             // 테이블 렌더링
+            let currentRecords = []; // 현재 조회된 레코드 저장
+            
             function displayRecords(records) {
+                currentRecords = records; // 전역 변수에 저장
                 const tbody = document.getElementById('tableBody');
+                const deleteAllBtn = document.getElementById('deleteAllBtn');
                 
                 if (records.length === 0) {
                     tbody.innerHTML = \`
@@ -572,8 +616,12 @@ app.get('/', (c) => {
                             </td>
                         </tr>
                     \`;
+                    deleteAllBtn.classList.add('hidden');
                     return;
                 }
+                
+                // 조회 결과가 있으면 전체 삭제 버튼 표시
+                deleteAllBtn.classList.remove('hidden');
                 
                 tbody.innerHTML = records.map(record => {
                     const boneInfo = record.bone_graft?.map(b => 
@@ -634,6 +682,36 @@ app.get('/', (c) => {
                     alert('삭제 중 오류가 발생했습니다: ' + err.message);
                 }
             }
+            
+            // 조회 결과 전체 삭제
+            document.getElementById('deleteAllBtn').addEventListener('click', async () => {
+                if (currentRecords.length === 0) {
+                    alert('삭제할 레코드가 없습니다.');
+                    return;
+                }
+                
+                const confirmMsg = \`조회된 \${currentRecords.length}건의 레코드를 모두 삭제하시겠습니까?\\n\\n이 작업은 되돌릴 수 없습니다.\`;
+                
+                if (!confirm(confirmMsg)) {
+                    return;
+                }
+                
+                try {
+                    const recordIds = currentRecords.map(r => r.id);
+                    const response = await axios.post('/api/records/batch-delete', {
+                        record_ids: recordIds
+                    });
+                    
+                    if (response.data.success) {
+                        alert(response.data.message);
+                        document.getElementById('searchBtn').click(); // 목록 새로고침
+                    } else {
+                        alert('삭제 실패: ' + response.data.message);
+                    }
+                } catch (err) {
+                    alert('일괄 삭제 중 오류가 발생했습니다: ' + err.message);
+                }
+            });
             
             // 페이지 로드시 전체 데이터 조회
             document.getElementById('searchBtn').click();

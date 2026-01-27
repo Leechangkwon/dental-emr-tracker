@@ -265,6 +265,33 @@ export async function deleteTreatmentRecord(
 }
 
 /**
+ * 여러 치료 기록 일괄 삭제
+ */
+export async function deleteTreatmentRecordsBatch(
+  db: D1Database,
+  recordIds: number[]
+): Promise<{ success: number; failed: number }> {
+  let success = 0;
+  let failed = 0;
+
+  for (const id of recordIds) {
+    try {
+      await db
+        .prepare(`DELETE FROM treatment_records WHERE id = ?`)
+        .bind(id)
+        .run();
+      success++;
+    } catch (err) {
+      console.error(`Delete error for record ${id}:`, err);
+      failed++;
+    }
+  }
+
+  return { success, failed };
+}
+
+
+/**
  * 뼈이식 데이터 수정
  */
 export async function updateBoneGraft(
