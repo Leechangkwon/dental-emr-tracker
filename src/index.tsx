@@ -49,33 +49,27 @@ app.post('/api/upload', async (c) => {
       }
     }
 
-    // 수술기록지 파싱
+    // 수술기록지 파싱 (통합 시트)
     if (surgeryFile) {
       try {
         const surgBuffer = await surgeryFile.arrayBuffer();
         const surgWorkbook = XLSX.read(surgBuffer);
 
-        // 임플란트 데이터 처리
-        const implantSheetName = '수술기록지(임플란트)';
-        if (surgWorkbook.SheetNames.includes(implantSheetName)) {
-          const implantSheet = surgWorkbook.Sheets[implantSheetName];
-          const implantRecords = parseSurgeryImplant(implantSheet, insMap);
-          const count = await saveImplantRecords(db, branchName, implantRecords);
-          totalRecords += count;
-        }
+        const sheetName = '수술기록지';
+        
+        if (!surgWorkbook.SheetNames.includes(sheetName)) {
+          errors.push(`'${sheetName}' 시트를 찾을 수 없습니다. 현재 시트: ${surgWorkbook.SheetNames.join(', ')}`);
+        } else {
+          const sheet = surgWorkbook.Sheets[sheetName];
+          
+          // 동일한 시트에서 임플란트와 동종골 모두 파싱
+          const implantRecords = parseSurgeryImplant(sheet, insMap);
+          const implantCount = await saveImplantRecords(db, branchName, implantRecords);
+          totalRecords += implantCount;
 
-        // 동종골 데이터 처리
-        const boneSheetName = '수술기록지(뼈)';
-        if (surgWorkbook.SheetNames.includes(boneSheetName)) {
-          const boneSheet = surgWorkbook.Sheets[boneSheetName];
-          const boneRecords = parseSurgeryBone(boneSheet);
-          const count = await saveBoneGraftRecords(db, branchName, boneRecords);
-          totalRecords += count;
-        }
-
-        if (!surgWorkbook.SheetNames.includes(implantSheetName) && 
-            !surgWorkbook.SheetNames.includes(boneSheetName)) {
-          errors.push('수술기록지 시트를 찾을 수 없습니다.');
+          const boneRecords = parseSurgeryBone(sheet);
+          const boneCount = await saveBoneGraftRecords(db, branchName, boneRecords);
+          totalRecords += boneCount;
         }
       } catch (err) {
         errors.push(`수술기록지 처리 중 오류: ${err}`);
@@ -240,12 +234,12 @@ app.get('/', (c) => {
 
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-2">
-                                수술기록지 파일 (임플란트/뼈)
+                                수술기록지 파일
                             </label>
                             <input type="file" id="surgeryFile" accept=".xlsx,.xls"
                                    class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
                             <p class="text-sm text-gray-500 mt-1">
-                                '수술기록지(임플란트)', '수술기록지(뼈)' 시트 포함
+                                '수술기록지' 시트 포함 (동종골 및 임플란트 데이터)
                             </p>
                         </div>
 
