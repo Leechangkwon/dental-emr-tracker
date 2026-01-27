@@ -661,8 +661,7 @@ app.get('/', (c) => {
                         \`<div class="text-xs mb-1 p-2 bg-gray-50 rounded">
                             <div class="text-gray-600">\${b.date}</div>
                             <div class="font-medium">\${b.product_name || '-'}</div>
-                            <div>수량: \${b.quantity} | \${b.supplier || '-'}</div>
-                            \${b.reference_tooth ? \`<div class="text-blue-600 text-xs mt-1">참조: \${b.reference_tooth}에 포함</div>\` : ''}
+                            <div>수량: \${b.reference_tooth ? \`\${b.reference_tooth}에 포함\` : b.quantity} | \${b.supplier || '-'}</div>
                         </div>\`
                     ).join('') || '-';
                     
