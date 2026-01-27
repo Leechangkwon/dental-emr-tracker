@@ -109,19 +109,24 @@ export function parseSurgeryImplant(
     
     // 거래처명 결정
     let supplier = '';
+    let isGBROnly = false;
+    
     if (isInsurance) {
       supplier = '보험';
     } else if (rawRecord.includes('[GBR Only]')) {
       supplier = 'GBR Only';
+      isGBROnly = true;
     } else {
       supplier = determineSupplier(rawRecord);
     }
     
-    // 품목명 추출
-    let productName = '';
-    if (supplier !== 'GBR Only') {
-      productName = extractProductName(rawRecord);
+    // GBR Only는 임플란트 레코드에서 제외
+    if (isGBROnly) {
+      continue;
     }
+    
+    // 품목명 추출
+    const productName = extractProductName(rawRecord);
     
     records.push({
       date: dateStr,

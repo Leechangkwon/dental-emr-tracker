@@ -3,7 +3,7 @@ import { cors } from 'hono/cors';
 import * as XLSX from 'xlsx';
 import { Bindings } from './types';
 import { parseInsuranceData, parseSurgeryImplant, parseSurgeryBone } from './parser';
-import { saveImplantRecords, saveBoneGraftRecords, queryTreatmentRecords } from './database';
+import { saveImplantRecords, saveBoneGraftRecords, queryTreatmentRecords, deleteTreatmentRecord, updateBoneGraft, updateImplant } from './database';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -112,16 +112,29 @@ app.post('/api/upload', async (c) => {
 
 /**
  * 치료 기록 조회 API
- * GET /api/records?branch_name=지점명&patient_name=환자명&chart_number=차트번호
+ * GET /api/records?branch_name=지점명&patient_name=환자명&chart_number=차트번호&start_date=날짜&end_date=날짜&supplier=품목군&product_name=품목명
  */
 app.get('/api/records', async (c) => {
   try {
     const branchName = c.req.query('branch_name');
     const patientName = c.req.query('patient_name');
     const chartNumber = c.req.query('chart_number');
+    const startDate = c.req.query('start_date');
+    const endDate = c.req.query('end_date');
+    const supplier = c.req.query('supplier');
+    const productName = c.req.query('product_name');
 
     const db = c.env.DB;
-    const records = await queryTreatmentRecords(db, branchName, patientName, chartNumber);
+    const records = await queryTreatmentRecords(
+      db, 
+      branchName, 
+      patientName, 
+      chartNumber,
+      startDate,
+      endDate,
+      supplier,
+      productName
+    );
 
     return c.json({
       success: true,
@@ -133,6 +146,101 @@ app.get('/api/records', async (c) => {
     return c.json({
       success: false,
       message: `조회 중 오류: ${err}`
+    }, 500);
+  }
+});
+
+/**
+ * 치료 기록 삭제 API
+ * DELETE /api/records/:id
+ */
+app.delete('/api/records/:id', async (c) => {
+  try {
+    const recordId = parseInt(c.req.param('id'));
+    const db = c.env.DB;
+    
+    const success = await deleteTreatmentRecord(db, recordId);
+    
+    if (success) {
+      return c.json({
+        success: true,
+        message: '레코드가 삭제되었습니다.'
+      });
+    } else {
+      return c.json({
+        success: false,
+        message: '레코드 삭제에 실패했습니다.'
+      }, 400);
+    }
+  } catch (err) {
+    console.error('Delete error:', err);
+    return c.json({
+      success: false,
+      message: `삭제 중 오류: ${err}`
+    }, 500);
+  }
+});
+
+/**
+ * 뼈이식 데이터 수정 API
+ * PUT /api/bone-graft/:id
+ */
+app.put('/api/bone-graft/:id', async (c) => {
+  try {
+    const id = parseInt(c.req.param('id'));
+    const { date, product_name, quantity, supplier } = await c.req.json();
+    const db = c.env.DB;
+    
+    const success = await updateBoneGraft(db, id, date, product_name, quantity, supplier);
+    
+    if (success) {
+      return c.json({
+        success: true,
+        message: '뼈이식 데이터가 수정되었습니다.'
+      });
+    } else {
+      return c.json({
+        success: false,
+        message: '수정에 실패했습니다.'
+      }, 400);
+    }
+  } catch (err) {
+    console.error('Update error:', err);
+    return c.json({
+      success: false,
+      message: `수정 중 오류: ${err}`
+    }, 500);
+  }
+});
+
+/**
+ * 임플란트 데이터 수정 API
+ * PUT /api/implant/:id
+ */
+app.put('/api/implant/:id', async (c) => {
+  try {
+    const id = parseInt(c.req.param('id'));
+    const { date, product_name, quantity, supplier, is_insurance } = await c.req.json();
+    const db = c.env.DB;
+    
+    const success = await updateImplant(db, id, date, product_name, quantity, supplier, is_insurance);
+    
+    if (success) {
+      return c.json({
+        success: true,
+        message: '임플란트 데이터가 수정되었습니다.'
+      });
+    } else {
+      return c.json({
+        success: false,
+        message: '수정에 실패했습니다.'
+      }, 400);
+    }
+  } catch (err) {
+    console.error('Update error:', err);
+    return c.json({
+      success: false,
+      message: `수정 중 오류: ${err}`
     }, 500);
   }
 });
@@ -271,7 +379,7 @@ app.get('/', (c) => {
                         데이터 조회
                     </h2>
 
-                    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-2">지점명</label>
                             <input type="text" id="filterBranch" 
@@ -290,7 +398,29 @@ app.get('/', (c) => {
                                    class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                                    placeholder="전체">
                         </div>
-                        <div class="flex items-end">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">시작 날짜</label>
+                            <input type="date" id="filterStartDate" 
+                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">종료 날짜</label>
+                            <input type="date" id="filterEndDate" 
+                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">품목군 (거래처)</label>
+                            <input type="text" id="filterSupplier" 
+                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                   placeholder="예: IZEN, 오스템">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">품목명</label>
+                            <input type="text" id="filterProductName" 
+                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                   placeholder="예: IZENOSS, TS III">
+                        </div>
+                        <div class="flex items-end md:col-span-2">
                             <button id="searchBtn" 
                                     class="w-full bg-green-600 text-white py-2 px-6 rounded-lg hover:bg-green-700 transition-colors">
                                 <i class="fas fa-search mr-2"></i>
@@ -321,11 +451,12 @@ app.get('/', (c) => {
                                     <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">뼈이식</th>
                                     <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">임플란트</th>
                                     <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">등록일</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">액션</th>
                                 </tr>
                             </thead>
                             <tbody id="tableBody" class="bg-white divide-y divide-gray-200">
                                 <tr>
-                                    <td colspan="7" class="px-4 py-8 text-center text-gray-500">
+                                    <td colspan="8" class="px-4 py-8 text-center text-gray-500">
                                         조회 버튼을 클릭하여 데이터를 확인하세요
                                     </td>
                                 </tr>
@@ -402,11 +533,19 @@ app.get('/', (c) => {
                 const branch = document.getElementById('filterBranch').value;
                 const patient = document.getElementById('filterPatient').value;
                 const chart = document.getElementById('filterChart').value;
+                const startDate = document.getElementById('filterStartDate').value;
+                const endDate = document.getElementById('filterEndDate').value;
+                const supplier = document.getElementById('filterSupplier').value;
+                const productName = document.getElementById('filterProductName').value;
                 
                 const params = new URLSearchParams();
                 if (branch) params.append('branch_name', branch);
                 if (patient) params.append('patient_name', patient);
                 if (chart) params.append('chart_number', chart);
+                if (startDate) params.append('start_date', startDate);
+                if (endDate) params.append('end_date', endDate);
+                if (supplier) params.append('supplier', supplier);
+                if (productName) params.append('product_name', productName);
                 
                 try {
                     const response = await axios.get(\`/api/records?\${params}\`);
@@ -428,7 +567,7 @@ app.get('/', (c) => {
                 if (records.length === 0) {
                     tbody.innerHTML = \`
                         <tr>
-                            <td colspan="7" class="px-4 py-8 text-center text-gray-500">
+                            <td colspan="8" class="px-4 py-8 text-center text-gray-500">
                                 조회된 데이터가 없습니다
                             </td>
                         </tr>
@@ -438,16 +577,16 @@ app.get('/', (c) => {
                 
                 tbody.innerHTML = records.map(record => {
                     const boneInfo = record.bone_graft?.map(b => 
-                        \`<div class="text-xs mb-1">
-                            <div>\${b.date}</div>
+                        \`<div class="text-xs mb-1 p-2 bg-gray-50 rounded">
+                            <div class="text-gray-600">\${b.date}</div>
                             <div class="font-medium">\${b.product_name || '-'}</div>
                             <div>수량: \${b.quantity} | \${b.supplier || '-'}</div>
                         </div>\`
                     ).join('') || '-';
                     
                     const implantInfo = record.implant?.map(i => 
-                        \`<div class="text-xs mb-1">
-                            <div>\${i.date}</div>
+                        \`<div class="text-xs mb-1 p-2 bg-gray-50 rounded">
+                            <div class="text-gray-600">\${i.date}</div>
                             <div class="font-medium">\${i.product_name || '-'}</div>
                             <div>수량: \${i.quantity} | \${i.supplier || '-'}</div>
                             \${i.is_insurance ? '<span class="bg-blue-100 text-blue-800 px-2 py-1 rounded text-xs">보험</span>' : ''}
@@ -465,9 +604,35 @@ app.get('/', (c) => {
                             <td class="px-4 py-3 text-sm text-gray-500">
                                 \${new Date(record.created_at).toLocaleDateString('ko-KR')}
                             </td>
+                            <td class="px-4 py-3 text-sm">
+                                <button onclick="deleteRecord(\${record.id})" 
+                                        class="text-red-600 hover:text-red-800 px-3 py-1 rounded hover:bg-red-50 transition-colors">
+                                    <i class="fas fa-trash mr-1"></i>삭제
+                                </button>
+                            </td>
                         </tr>
                     \`;
                 }).join('');
+            }
+            
+            // 레코드 삭제
+            async function deleteRecord(recordId) {
+                if (!confirm('이 레코드를 삭제하시겠습니까?')) {
+                    return;
+                }
+                
+                try {
+                    const response = await axios.delete(\`/api/records/\${recordId}\`);
+                    
+                    if (response.data.success) {
+                        alert('삭제되었습니다.');
+                        document.getElementById('searchBtn').click(); // 목록 새로고침
+                    } else {
+                        alert('삭제 실패: ' + response.data.message);
+                    }
+                } catch (err) {
+                    alert('삭제 중 오류가 발생했습니다: ' + err.message);
+                }
             }
             
             // 페이지 로드시 전체 데이터 조회

@@ -144,7 +144,11 @@ export async function queryTreatmentRecords(
   db: D1Database,
   branchName?: string,
   patientName?: string,
-  chartNumber?: string
+  chartNumber?: string,
+  startDate?: string,
+  endDate?: string,
+  supplier?: string,
+  productName?: string
 ): Promise<TreatmentView[]> {
   // 기본 쿼리
   let query = `
@@ -157,6 +161,8 @@ export async function queryTreatmentRecords(
       tr.created_at,
       tr.updated_at
     FROM treatment_records tr
+    LEFT JOIN bone_graft bg ON tr.id = bg.treatment_record_id
+    LEFT JOIN implant im ON tr.id = im.treatment_record_id
     WHERE 1=1
   `;
 
@@ -175,6 +181,29 @@ export async function queryTreatmentRecords(
   if (chartNumber) {
     query += ` AND tr.chart_number = ?`;
     params.push(chartNumber);
+  }
+
+  // 날짜 필터
+  if (startDate) {
+    query += ` AND (bg.date >= ? OR im.date >= ?)`;
+    params.push(startDate, startDate);
+  }
+
+  if (endDate) {
+    query += ` AND (bg.date <= ? OR im.date <= ?)`;
+    params.push(endDate, endDate);
+  }
+
+  // 품목군(거래처) 필터
+  if (supplier) {
+    query += ` AND (bg.supplier LIKE ? OR im.supplier LIKE ?)`;
+    params.push(`%${supplier}%`, `%${supplier}%`);
+  }
+
+  // 품목명 필터
+  if (productName) {
+    query += ` AND (bg.product_name LIKE ? OR im.product_name LIKE ?)`;
+    params.push(`%${productName}%`, `%${productName}%`);
   }
 
   query += ` ORDER BY tr.created_at DESC, tr.patient_name, tr.chart_number, tr.tooth_number`;
@@ -212,4 +241,82 @@ export async function queryTreatmentRecords(
   }
 
   return views;
+}
+
+/**
+ * 치료 기록 삭제
+ */
+export async function deleteTreatmentRecord(
+  db: D1Database,
+  recordId: number
+): Promise<boolean> {
+  try {
+    // CASCADE 삭제로 관련 데이터 자동 삭제
+    await db
+      .prepare(`DELETE FROM treatment_records WHERE id = ?`)
+      .bind(recordId)
+      .run();
+    
+    return true;
+  } catch (err) {
+    console.error('Delete error:', err);
+    return false;
+  }
+}
+
+/**
+ * 뼈이식 데이터 수정
+ */
+export async function updateBoneGraft(
+  db: D1Database,
+  id: number,
+  date: string,
+  productName: string,
+  quantity: number,
+  supplier: string
+): Promise<boolean> {
+  try {
+    await db
+      .prepare(
+        `UPDATE bone_graft 
+         SET date = ?, product_name = ?, quantity = ?, supplier = ?
+         WHERE id = ?`
+      )
+      .bind(date, productName, quantity, supplier, id)
+      .run();
+    
+    return true;
+  } catch (err) {
+    console.error('Update bone graft error:', err);
+    return false;
+  }
+}
+
+/**
+ * 임플란트 데이터 수정
+ */
+export async function updateImplant(
+  db: D1Database,
+  id: number,
+  date: string,
+  productName: string,
+  quantity: number,
+  supplier: string,
+  isInsurance: boolean
+): Promise<boolean> {
+  try {
+    await db
+      .prepare(
+        `UPDATE implant 
+         SET date = ?, product_name = ?, quantity = ?, supplier = ?, is_insurance = ?
+         WHERE id = ?`
+      )
+      .bind(date, productName, quantity, supplier, isInsurance ? 1 : 0, id)
+      .run();
+    
+    return true;
+  } catch (err) {
+    console.error('Update implant error:', err);
+    return false;
+  }
 }
