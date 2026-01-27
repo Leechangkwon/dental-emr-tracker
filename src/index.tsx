@@ -82,6 +82,16 @@ app.post('/api/upload', async (c) => {
       }
     }
 
+    // 파일이 하나도 선택되지 않은 경우
+    if (!surgeryFile && !insuranceFile) {
+      return c.json({
+        success: false,
+        message: '최소 하나의 파일을 선택해주세요.',
+        errors: []
+      }, 400);
+    }
+
+    // 에러가 있는 경우
     if (errors.length > 0) {
       return c.json({
         success: false,
@@ -91,6 +101,7 @@ app.post('/api/upload', async (c) => {
       }, 400);
     }
 
+    // 성공
     return c.json({
       success: true,
       message: `${totalRecords}개의 레코드가 성공적으로 저장되었습니다.`,
@@ -370,12 +381,25 @@ app.get('/', (c) => {
                         throw new Error(response.data.message);
                     }
                 } catch (err) {
-                    resultDiv.innerHTML = \`
+                    const errorData = err.response?.data;
+                    let errorHtml = \`
                         <div class="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-lg">
-                            <i class="fas fa-exclamation-circle mr-2"></i>
-                            오류: \${err.response?.data?.message || err.message}
-                        </div>
+                            <div class="font-bold mb-2">
+                                <i class="fas fa-exclamation-circle mr-2"></i>
+                                오류: \${errorData?.message || err.message}
+                            </div>
                     \`;
+                    
+                    if (errorData?.errors && errorData.errors.length > 0) {
+                        errorHtml += '<ul class="list-disc list-inside mt-2 text-sm">';
+                        errorData.errors.forEach(error => {
+                            errorHtml += \`<li>\${error}</li>\`;
+                        });
+                        errorHtml += '</ul>';
+                    }
+                    
+                    errorHtml += '</div>';
+                    resultDiv.innerHTML = errorHtml;
                 }
             });
             
