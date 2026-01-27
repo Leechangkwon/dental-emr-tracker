@@ -488,8 +488,12 @@ app.get('/', (c) => {
                                     <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">환자명</th>
                                     <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">차트번호</th>
                                     <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">치식</th>
-                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">뼈이식</th>
-                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">임플란트</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        뼈이식 <span id="boneTotal" class="text-blue-600 font-bold"></span>
+                                    </th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        임플란트 <span id="implantTotal" class="text-blue-600 font-bold"></span>
+                                    </th>
                                     <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">등록일</th>
                                     <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">액션</th>
                                 </tr>
@@ -617,11 +621,40 @@ app.get('/', (c) => {
                         </tr>
                     \`;
                     deleteAllBtn.classList.add('hidden');
+                    document.getElementById('boneTotal').textContent = '';
+                    document.getElementById('implantTotal').textContent = '';
                     return;
                 }
                 
                 // 조회 결과가 있으면 전체 삭제 버튼 표시
                 deleteAllBtn.classList.remove('hidden');
+                
+                // 뼈이식 및 임플란트 총 수량 계산
+                let boneTotalQty = 0;
+                let implantTotalQty = 0;
+                
+                records.forEach(record => {
+                    // 뼈이식 수량 합계
+                    if (record.bone_graft) {
+                        record.bone_graft.forEach(b => {
+                            boneTotalQty += b.quantity || 0;
+                        });
+                    }
+                    
+                    // 임플란트 수량 합계 (GBR Only 제외)
+                    if (record.implant) {
+                        record.implant.forEach(i => {
+                            // GBR Only는 제외
+                            if (i.supplier !== 'GBR Only') {
+                                implantTotalQty += i.quantity || 0;
+                            }
+                        });
+                    }
+                });
+                
+                // 합계 표시
+                document.getElementById('boneTotal').textContent = \`(합계: \${boneTotalQty})\`;
+                document.getElementById('implantTotal').textContent = \`(합계: \${implantTotalQty})\`;
                 
                 tbody.innerHTML = records.map(record => {
                     const boneInfo = record.bone_graft?.map(b => 
