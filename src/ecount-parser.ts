@@ -69,3 +69,25 @@ export function parseEcountProducts(sheet: XLSX.WorkSheet): EcountProduct[] {
   
   return products;
 }
+
+/**
+ * 파일 버퍼에서 이카운트 데이터 파싱
+ */
+export async function parseEcountData(buffer: ArrayBuffer, fileName: string): Promise<EcountProduct[]> {
+  let workbook: XLSX.WorkBook;
+  
+  // CSV 파일인 경우
+  if (fileName.toLowerCase().endsWith('.csv')) {
+    const text = new TextDecoder('utf-8').decode(buffer);
+    workbook = XLSX.read(text, { type: 'string' });
+  } else {
+    // Excel 파일인 경우
+    workbook = XLSX.read(buffer);
+  }
+  
+  // 첫 번째 시트 사용
+  const sheetName = workbook.SheetNames[0];
+  const sheet = workbook.Sheets[sheetName];
+  
+  return parseEcountProducts(sheet);
+}

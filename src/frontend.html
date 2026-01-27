@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>치과 관리 시스템</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
+</head>
+<body class="bg-gray-50">
+    <div class="min-h-screen flex flex-col">
+        <!-- 헤더 -->
+        <header class="bg-blue-600 text-white shadow-lg">
+            <div class="container mx-auto px-4 py-6">
+                <h1 class="text-3xl font-bold">
+                    <i class="fas fa-tooth mr-3"></i>
+                    치과 관리 시스템
+                </h1>
+                <p class="text-blue-100 mt-2">EMR 추적 및 이카운트 품목 관리</p>
+            </div>
+        </header>
+
+        <div class="flex flex-1">
+            <!-- 좌측 메뉴 -->
+            <aside class="w-64 bg-white shadow-lg">
+                <nav class="p-4">
+                    <ul class="space-y-2">
+                        <li>
+                            <button id="menuEmr" class="w-full text-left px-4 py-3 rounded-lg hover:bg-blue-50 transition-colors bg-blue-100 text-blue-700 font-medium">
+                                <i class="fas fa-hospital-user mr-2"></i>
+                                치과 EMR 추적
+                            </button>
+                        </li>
+                        <li>
+                            <button id="menuEcount" class="w-full text-left px-4 py-3 rounded-lg hover:bg-blue-50 transition-colors text-gray-700">
+                                <i class="fas fa-box mr-2"></i>
+                                이카운트 품목 관리
+                            </button>
+                        </li>
+                    </ul>
+                </nav>
+            </aside>
+
+            <!-- 메인 컨텐츠 영역 -->
+            <main class="flex-1 p-8">
+                <!-- EMR 추적 섹션 -->
+                <div id="emrSection">
+                    __EMR_CONTENT__
+                </div>
+                
+                <!-- 이카운트 섹션 (초기 숨김) -->
+                <div id="ecountSection" class="hidden">
+                    __ECOUNT_CONTENT__
+                </div>
+            </main>
+        </div>
+    </div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/axios@1.6.0/dist/axios.min.js"></script>
+    <script>
+        __JAVASCRIPT__
+    </script>
+</body>
+</html>

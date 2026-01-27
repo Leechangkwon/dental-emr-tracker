@@ -1,0 +1,1263 @@
+import { Hono } from 'hono';
+import { cors } from 'hono/cors';
+import * as XLSX from 'xlsx';
+import { Bindings } from './types';
+import { parseInsuranceData, parseSurgeryImplant, parseSurgeryBone } from './parser';
+import { saveImplantRecords, saveBoneGraftRecords, queryTreatmentRecords, deleteTreatmentRecord, deleteTreatmentRecordsBatch, updateBoneGraft, updateImplant } from './database';
+import { parseEcountProducts } from './ecount-parser';
+import { saveEcountProducts, queryEcountProducts, updateEcountProduct, deleteEcountProduct } from './ecount-db';
+
+const app = new Hono<{ Bindings: Bindings }>();
+
+// CORS 설정
+app.use('/api/*', cors());
+
+/**
+ * 엑셀 파일 업로드 및 처리 API
+ * POST /api/upload
+ * Body: FormData with files and branchName
+ */
+app.post('/api/upload', async (c) => {
+  try {
+    const formData = await c.req.formData();
+    const branchName = formData.get('branchName') as string;
+    const surgeryFile = formData.get('surgeryFile') as File | null;
+    const insuranceFile = formData.get('insuranceFile') as File | null;
+
+    if (!branchName) {
+      return c.json({ success: false, message: '지점명을 입력해주세요.' }, 400);
+    }
+
+    const db = c.env.DB;
+    let totalRecords = 0;
+    const errors: string[] = [];
+
+    // 보험 데이터 파싱 (급여 임플란트 시트)
+    let insMap = new Map<string, string[]>();
+    if (insuranceFile) {
+      try {
+        const insBuffer = await insuranceFile.arrayBuffer();
+        const insWorkbook = XLSX.read(insBuffer);
+        const insSheetName = '급여 임플란트';
+        
+        if (insWorkbook.SheetNames.includes(insSheetName)) {
+          const insSheet = insWorkbook.Sheets[insSheetName];
+          insMap = parseInsuranceData(insSheet);
+        } else {
+          errors.push(`'${insSheetName}' 시트를 찾을 수 없습니다.`);
+        }
+      } catch (err) {
+        errors.push(`보험 파일 처리 중 오류: ${err}`);
+      }
+    }
+
+    // 수술기록지 파싱 (통합 시트)
+    if (surgeryFile) {
+      try {
+        const surgBuffer = await surgeryFile.arrayBuffer();
+        const surgWorkbook = XLSX.read(surgBuffer);
+
+        const sheetName = '수술기록지';
+        
+        if (!surgWorkbook.SheetNames.includes(sheetName)) {
+          errors.push(`'${sheetName}' 시트를 찾을 수 없습니다. 현재 시트: ${surgWorkbook.SheetNames.join(', ')}`);
+        } else {
+          const sheet = surgWorkbook.Sheets[sheetName];
+          
+          // 동일한 시트에서 임플란트와 동종골 모두 파싱
+          const implantRecords = parseSurgeryImplant(sheet, insMap);
+          const implantCount = await saveImplantRecords(db, branchName, implantRecords);
+          totalRecords += implantCount;
+
+          const boneRecords = parseSurgeryBone(sheet);
+          const boneCount = await saveBoneGraftRecords(db, branchName, boneRecords);
+          totalRecords += boneCount;
+        }
+      } catch (err) {
+        errors.push(`수술기록지 처리 중 오류: ${err}`);
+      }
+    }
+
+    // 파일이 하나도 선택되지 않은 경우
+    if (!surgeryFile && !insuranceFile) {
+      return c.json({
+        success: false,
+        message: '최소 하나의 파일을 선택해주세요.',
+        errors: []
+      }, 400);
+    }
+
+    // 에러가 있는 경우
+    if (errors.length > 0) {
+      return c.json({
+        success: false,
+        message: '일부 데이터 처리 중 오류가 발생했습니다.',
+        recordsProcessed: totalRecords,
+        errors
+      }, 400);
+    }
+
+    // 성공
+    return c.json({
+      success: true,
+      message: `${totalRecords}개의 레코드가 성공적으로 저장되었습니다.`,
+      recordsProcessed: totalRecords
+    });
+  } catch (err) {
+    console.error('Upload error:', err);
+    return c.json({
+      success: false,
+      message: `서버 오류: ${err}`
+    }, 500);
+  }
+});
+
+/**
+ * 치료 기록 조회 API
+ * GET /api/records?branch_name=지점명&patient_name=환자명&chart_number=차트번호&start_date=날짜&end_date=날짜&supplier=품목군&product_name=품목명
+ */
+app.get('/api/records', async (c) => {
+  try {
+    const branchName = c.req.query('branch_name');
+    const patientName = c.req.query('patient_name');
+    const chartNumber = c.req.query('chart_number');
+    const startDate = c.req.query('start_date');
+    const endDate = c.req.query('end_date');
+    const supplier = c.req.query('supplier');
+    const productName = c.req.query('product_name');
+
+    const db = c.env.DB;
+    const records = await queryTreatmentRecords(
+      db, 
+      branchName, 
+      patientName, 
+      chartNumber,
+      startDate,
+      endDate,
+      supplier,
+      productName
+    );
+
+    return c.json({
+      success: true,
+      data: records,
+      count: records.length
+    });
+  } catch (err) {
+    console.error('Query error:', err);
+    return c.json({
+      success: false,
+      message: `조회 중 오류: ${err}`
+    }, 500);
+  }
+});
+
+/**
+ * 치료 기록 삭제 API
+ * DELETE /api/records/:id
+ */
+app.delete('/api/records/:id', async (c) => {
+  try {
+    const recordId = parseInt(c.req.param('id'));
+    const db = c.env.DB;
+    
+    const success = await deleteTreatmentRecord(db, recordId);
+    
+    if (success) {
+      return c.json({
+        success: true,
+        message: '레코드가 삭제되었습니다.'
+      });
+    } else {
+      return c.json({
+        success: false,
+        message: '레코드 삭제에 실패했습니다.'
+      }, 400);
+    }
+  } catch (err) {
+    console.error('Delete error:', err);
+    return c.json({
+      success: false,
+      message: `삭제 중 오류: ${err}`
+    }, 500);
+  }
+});
+
+/**
+ * 여러 치료 기록 일괄 삭제 API
+ * POST /api/records/batch-delete
+ */
+app.post('/api/records/batch-delete', async (c) => {
+  try {
+    const { record_ids } = await c.req.json();
+    
+    if (!record_ids || !Array.isArray(record_ids) || record_ids.length === 0) {
+      return c.json({
+        success: false,
+        message: '삭제할 레코드 ID를 제공해주세요.'
+      }, 400);
+    }
+    
+    const db = c.env.DB;
+    const result = await deleteTreatmentRecordsBatch(db, record_ids);
+    
+    return c.json({
+      success: true,
+      message: `${result.success}개의 레코드가 삭제되었습니다.${result.failed > 0 ? ` (실패: ${result.failed}개)` : ''}`,
+      deleted: result.success,
+      failed: result.failed
+    });
+  } catch (err) {
+    console.error('Batch delete error:', err);
+    return c.json({
+      success: false,
+      message: `일괄 삭제 중 오류: ${err}`
+    }, 500);
+  }
+});
+
+/**
+ * 뼈이식 데이터 수정 API
+ * PUT /api/bone-graft/:id
+ */
+app.put('/api/bone-graft/:id', async (c) => {
+  try {
+    const id = parseInt(c.req.param('id'));
+    const { date, product_name, quantity, supplier } = await c.req.json();
+    const db = c.env.DB;
+    
+    const success = await updateBoneGraft(db, id, date, product_name, quantity, supplier);
+    
+    if (success) {
+      return c.json({
+        success: true,
+        message: '뼈이식 데이터가 수정되었습니다.'
+      });
+    } else {
+      return c.json({
+        success: false,
+        message: '수정에 실패했습니다.'
+      }, 400);
+    }
+  } catch (err) {
+    console.error('Update error:', err);
+    return c.json({
+      success: false,
+      message: `수정 중 오류: ${err}`
+    }, 500);
+  }
+});
+
+/**
+ * 임플란트 데이터 수정 API
+ * PUT /api/implant/:id
+ */
+app.put('/api/implant/:id', async (c) => {
+  try {
+    const id = parseInt(c.req.param('id'));
+    const { date, product_name, quantity, supplier, is_insurance } = await c.req.json();
+    const db = c.env.DB;
+    
+    const success = await updateImplant(db, id, date, product_name, quantity, supplier, is_insurance);
+    
+    if (success) {
+      return c.json({
+        success: true,
+        message: '임플란트 데이터가 수정되었습니다.'
+      });
+    } else {
+      return c.json({
+        success: false,
+        message: '수정에 실패했습니다.'
+      }, 400);
+    }
+  } catch (err) {
+    console.error('Update error:', err);
+    return c.json({
+      success: false,
+      message: `수정 중 오류: ${err}`
+    }, 500);
+  }
+});
+
+/**
+ * 지점 목록 조회 API
+ * GET /api/branches
+ */
+app.get('/api/branches', async (c) => {
+  try {
+    const db = c.env.DB;
+    const result = await db
+      .prepare(`SELECT DISTINCT branch_name FROM treatment_records ORDER BY branch_name`)
+      .all<{ branch_name: string }>();
+
+    return c.json({
+      success: true,
+      data: result.results.map((r) => r.branch_name)
+    });
+  } catch (err) {
+    return c.json({
+      success: false,
+      message: `조회 중 오류: ${err}`
+    }, 500);
+  }
+});
+
+/**
+ * 데이터베이스 초기화 API (개발용)
+ * DELETE /api/reset
+ */
+app.delete('/api/reset', async (c) => {
+  try {
+    const db = c.env.DB;
+    
+    await db.prepare(`DELETE FROM bone_graft`).run();
+    await db.prepare(`DELETE FROM implant`).run();
+    await db.prepare(`DELETE FROM temporary_denture`).run();
+    await db.prepare(`DELETE FROM prosthetic_occlusion`).run();
+    await db.prepare(`DELETE FROM prosthetic_completion`).run();
+    await db.prepare(`DELETE FROM treatment_records`).run();
+
+    return c.json({
+      success: true,
+      message: '모든 데이터가 삭제되었습니다.'
+    });
+  } catch (err) {
+    return c.json({
+      success: false,
+      message: `초기화 중 오류: ${err}`
+    }, 500);
+  }
+});
+
+/**
+ * 메인 페이지
+ */
+app.get('/', (c) => {
+  return c.html(`
+    <!DOCTYPE html>
+    <html lang="ko">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>치과 EMR 추적 시스템</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
+    </head>
+    <body class="bg-gray-50">
+        <div class="min-h-screen flex flex-col">
+            <!-- 헤더 -->
+            <header class="bg-blue-600 text-white shadow-lg">
+                <div class="container mx-auto px-4 py-6">
+                    <h1 class="text-3xl font-bold">
+                        <i class="fas fa-tooth mr-3"></i>
+                        치과 관리 시스템
+                    </h1>
+                    <p class="text-blue-100 mt-2">EMR 추적 및 이카운트 품목 관리</p>
+                </div>
+            </header>
+
+            <div class="flex flex-1">
+                <!-- 좌측 메뉴 -->
+                <aside class="w-64 bg-white shadow-lg">
+                    <nav class="p-4">
+                        <ul class="space-y-2">
+                            <li>
+                                <button id="menuEmr" class="w-full text-left px-4 py-3 rounded-lg hover:bg-blue-50 transition-colors bg-blue-100 text-blue-700 font-medium">
+                                    <i class="fas fa-hospital-user mr-2"></i>
+                                    치과 EMR 추적
+                                </button>
+                            </li>
+                            <li>
+                                <button id="menuEcount" class="w-full text-left px-4 py-3 rounded-lg hover:bg-blue-50 transition-colors text-gray-700">
+                                    <i class="fas fa-box mr-2"></i>
+                                    이카운트 품목 관리
+                                </button>
+                            </li>
+                        </ul>
+                    </nav>
+                </aside>
+
+                <!-- 메인 컨텐츠 영역 -->
+                <main class="flex-1 p-8">
+                    <!-- EMR 추적 섹션 -->
+                    <div id="emrSection">
+                        <!-- 업로드 섹션 -->
+                        <div class="bg-white rounded-lg shadow-md p-6 mb-8">
+                            <h2 class="text-2xl font-bold text-gray-800 mb-4">
+                                <i class="fas fa-upload mr-2"></i>
+                                데이터 업로드
+                            </h2>
+                            
+                            <form id="uploadForm" class="space-y-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">
+                                        지점명 <span class="text-red-500">*</span>
+                                    </label>
+                                    <input type="text" id="branchName" 
+                                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                           placeholder="지점명을 입력하세요" required>
+                                </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">
+                                수술기록지 파일
+                            </label>
+                            <input type="file" id="surgeryFile" accept=".xlsx,.xls"
+                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+                            <p class="text-sm text-gray-500 mt-1">
+                                '수술기록지' 시트 포함 (동종골 및 임플란트 데이터)
+                            </p>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">
+                                급여 임플란트 파일
+                            </label>
+                            <input type="file" id="insuranceFile" accept=".xlsx,.xls"
+                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+                            <p class="text-sm text-gray-500 mt-1">
+                                '급여 임플란트' 시트 포함
+                            </p>
+                        </div>
+
+                        <button type="submit" 
+                                class="w-full bg-blue-600 text-white py-3 px-6 rounded-lg hover:bg-blue-700 transition-colors font-medium">
+                            <i class="fas fa-cloud-upload-alt mr-2"></i>
+                            업로드 및 저장
+                        </button>
+                    </form>
+
+                    <div id="uploadResult" class="mt-4 hidden"></div>
+                </div>
+
+                <!-- 조회 섹션 -->
+                <div class="bg-white rounded-lg shadow-md p-6 mb-8">
+                    <h2 class="text-2xl font-bold text-gray-800 mb-4">
+                        <i class="fas fa-search mr-2"></i>
+                        데이터 조회
+                    </h2>
+
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">지점명</label>
+                            <input type="text" id="filterBranch" 
+                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                   placeholder="전체">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">환자명</label>
+                            <input type="text" id="filterPatient" 
+                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                   placeholder="전체">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">차트번호</label>
+                            <input type="text" id="filterChart" 
+                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                   placeholder="전체">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">시작 날짜</label>
+                            <input type="date" id="filterStartDate" 
+                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">종료 날짜</label>
+                            <input type="date" id="filterEndDate" 
+                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">품목군 (거래처)</label>
+                            <input type="text" id="filterSupplier" 
+                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                   placeholder="예: IZEN, 오스템">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">품목명</label>
+                            <input type="text" id="filterProductName" 
+                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                   placeholder="예: IZENOSS, TS III">
+                        </div>
+                        <div class="flex items-end md:col-span-2">
+                            <button id="searchBtn" 
+                                    class="w-full bg-green-600 text-white py-2 px-6 rounded-lg hover:bg-green-700 transition-colors">
+                                <i class="fas fa-search mr-2"></i>
+                                조회
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 결과 테이블 -->
+                <div class="bg-white rounded-lg shadow-md p-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <div>
+                            <h2 class="text-2xl font-bold text-gray-800">
+                                <i class="fas fa-table mr-2"></i>
+                                치료 기록
+                            </h2>
+                            <span id="recordCount" class="text-gray-600 text-sm"></span>
+                        </div>
+                        <button id="deleteAllBtn" 
+                                class="hidden bg-red-600 text-white py-2 px-4 rounded-lg hover:bg-red-700 transition-colors">
+                            <i class="fas fa-trash-alt mr-2"></i>
+                            조회 결과 전체 삭제
+                        </button>
+                    </div>
+
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">지점</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">환자명</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">차트번호</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">치식</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        뼈이식 <span id="boneTotal" class="text-blue-600 font-bold"></span>
+                                    </th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        임플란트 <span id="implantTotal" class="text-blue-600 font-bold"></span>
+                                    </th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">등록일</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">액션</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tableBody" class="bg-white divide-y divide-gray-200">
+                                <tr>
+                                    <td colspan="8" class="px-4 py-8 text-center text-gray-500">
+                                        조회 버튼을 클릭하여 데이터를 확인하세요
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <script src="https://cdn.jsdelivr.net/npm/axios@1.6.0/dist/axios.min.js"></script>
+        <script>
+            // 업로드 폼 처리
+            document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                
+                const branchName = document.getElementById('branchName').value;
+                const surgeryFile = document.getElementById('surgeryFile').files[0];
+                const insuranceFile = document.getElementById('insuranceFile').files[0];
+                
+                if (!surgeryFile && !insuranceFile) {
+                    alert('최소 하나의 파일을 선택해주세요.');
+                    return;
+                }
+                
+                const formData = new FormData();
+                formData.append('branchName', branchName);
+                if (surgeryFile) formData.append('surgeryFile', surgeryFile);
+                if (insuranceFile) formData.append('insuranceFile', insuranceFile);
+                
+                const resultDiv = document.getElementById('uploadResult');
+                resultDiv.innerHTML = '<div class="text-blue-600"><i class="fas fa-spinner fa-spin mr-2"></i>업로드 중...</div>';
+                resultDiv.classList.remove('hidden');
+                
+                try {
+                    const response = await axios.post('/api/upload', formData);
+                    
+                    if (response.data.success) {
+                        resultDiv.innerHTML = \`
+                            <div class="bg-green-50 border border-green-200 text-green-800 px-4 py-3 rounded-lg">
+                                <i class="fas fa-check-circle mr-2"></i>
+                                \${response.data.message}
+                            </div>
+                        \`;
+                        document.getElementById('uploadForm').reset();
+                    } else {
+                        throw new Error(response.data.message);
+                    }
+                } catch (err) {
+                    const errorData = err.response?.data;
+                    let errorHtml = \`
+                        <div class="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-lg">
+                            <div class="font-bold mb-2">
+                                <i class="fas fa-exclamation-circle mr-2"></i>
+                                오류: \${errorData?.message || err.message}
+                            </div>
+                    \`;
+                    
+                    if (errorData?.errors && errorData.errors.length > 0) {
+                        errorHtml += '<ul class="list-disc list-inside mt-2 text-sm">';
+                        errorData.errors.forEach(error => {
+                            errorHtml += \`<li>\${error}</li>\`;
+                        });
+                        errorHtml += '</ul>';
+                    }
+                    
+                    errorHtml += '</div>';
+                    resultDiv.innerHTML = errorHtml;
+                }
+            });
+            
+            // 조회 버튼 처리
+            document.getElementById('searchBtn').addEventListener('click', async () => {
+                const branch = document.getElementById('filterBranch').value;
+                const patient = document.getElementById('filterPatient').value;
+                const chart = document.getElementById('filterChart').value;
+                const startDate = document.getElementById('filterStartDate').value;
+                const endDate = document.getElementById('filterEndDate').value;
+                const supplier = document.getElementById('filterSupplier').value;
+                const productName = document.getElementById('filterProductName').value;
+                
+                const params = new URLSearchParams();
+                if (branch) params.append('branch_name', branch);
+                if (patient) params.append('patient_name', patient);
+                if (chart) params.append('chart_number', chart);
+                if (startDate) params.append('start_date', startDate);
+                if (endDate) params.append('end_date', endDate);
+                if (supplier) params.append('supplier', supplier);
+                if (productName) params.append('product_name', productName);
+                
+                try {
+                    const response = await axios.get(\`/api/records?\${params}\`);
+                    
+                    if (response.data.success) {
+                        displayRecords(response.data.data);
+                        document.getElementById('recordCount').textContent = 
+                            \`총 \${response.data.count}건\`;
+                    }
+                } catch (err) {
+                    alert('조회 중 오류가 발생했습니다: ' + err.message);
+                }
+            });
+            
+            // 테이블 렌더링
+            let currentRecords = []; // 현재 조회된 레코드 저장
+            
+            function displayRecords(records) {
+                currentRecords = records; // 전역 변수에 저장
+                const tbody = document.getElementById('tableBody');
+                const deleteAllBtn = document.getElementById('deleteAllBtn');
+                
+                if (records.length === 0) {
+                    tbody.innerHTML = \`
+                        <tr>
+                            <td colspan="8" class="px-4 py-8 text-center text-gray-500">
+                                조회된 데이터가 없습니다
+                            </td>
+                        </tr>
+                    \`;
+                    deleteAllBtn.classList.add('hidden');
+                    document.getElementById('boneTotal').textContent = '';
+                    document.getElementById('implantTotal').textContent = '';
+                    return;
+                }
+                
+                // 조회 결과가 있으면 전체 삭제 버튼 표시
+                deleteAllBtn.classList.remove('hidden');
+                
+                // 뼈이식 및 임플란트 총 수량 계산
+                let boneTotalQty = 0;
+                let implantTotalQty = 0;
+                
+                records.forEach(record => {
+                    // 뼈이식 수량 합계
+                    if (record.bone_graft) {
+                        record.bone_graft.forEach(b => {
+                            boneTotalQty += b.quantity || 0;
+                        });
+                    }
+                    
+                    // 임플란트 수량 합계 (GBR Only 제외)
+                    if (record.implant) {
+                        record.implant.forEach(i => {
+                            // GBR Only는 제외
+                            if (i.supplier !== 'GBR Only') {
+                                implantTotalQty += i.quantity || 0;
+                            }
+                        });
+                    }
+                });
+                
+                // 합계 표시
+                document.getElementById('boneTotal').textContent = \`(합계: \${boneTotalQty})\`;
+                document.getElementById('implantTotal').textContent = \`(합계: \${implantTotalQty})\`;
+                
+                tbody.innerHTML = records.map(record => {
+                    const boneInfo = record.bone_graft?.map(b => 
+                        \`<div class="text-xs mb-1 p-2 bg-gray-50 rounded">
+                            <div class="text-gray-600">\${b.date}</div>
+                            <div class="font-medium">\${b.product_name || '-'}</div>
+                            <div>수량: \${b.reference_tooth ? \`\${b.reference_tooth}에 포함\` : b.quantity} | \${b.supplier || '-'}</div>
+                        </div>\`
+                    ).join('') || '-';
+                    
+                    const implantInfo = record.implant?.map(i => 
+                        \`<div class="text-xs mb-1 p-2 bg-gray-50 rounded">
+                            <div class="text-gray-600">\${i.date}</div>
+                            <div class="font-medium">\${i.product_name || '-'}</div>
+                            <div>수량: \${i.quantity} | \${i.supplier || '-'}</div>
+                            \${i.is_insurance ? '<span class="bg-blue-100 text-blue-800 px-2 py-1 rounded text-xs">보험</span>' : ''}
+                        </div>\`
+                    ).join('') || '-';
+                    
+                    return \`
+                        <tr class="hover:bg-gray-50">
+                            <td class="px-4 py-3 text-sm">\${record.branch_name}</td>
+                            <td class="px-4 py-3 text-sm font-medium">\${record.patient_name}</td>
+                            <td class="px-4 py-3 text-sm">\${record.chart_number}</td>
+                            <td class="px-4 py-3 text-sm font-mono">#\${record.tooth_number}</td>
+                            <td class="px-4 py-3 text-sm">\${boneInfo}</td>
+                            <td class="px-4 py-3 text-sm">\${implantInfo}</td>
+                            <td class="px-4 py-3 text-sm text-gray-500">
+                                \${new Date(record.created_at).toLocaleDateString('ko-KR')}
+                            </td>
+                            <td class="px-4 py-3 text-sm">
+                                <button onclick="deleteRecord(\${record.id})" 
+                                        class="text-red-600 hover:text-red-800 px-3 py-1 rounded hover:bg-red-50 transition-colors">
+                                    <i class="fas fa-trash mr-1"></i>삭제
+                                </button>
+                            </td>
+                        </tr>
+                    \`;
+                }).join('');
+            }
+            
+            // 레코드 삭제
+            async function deleteRecord(recordId) {
+                if (!confirm('이 레코드를 삭제하시겠습니까?')) {
+                    return;
+                }
+                
+                try {
+                    const response = await axios.delete(\`/api/records/\${recordId}\`);
+                    
+                    if (response.data.success) {
+                        alert('삭제되었습니다.');
+                        document.getElementById('searchBtn').click(); // 목록 새로고침
+                    } else {
+                        alert('삭제 실패: ' + response.data.message);
+                    }
+                } catch (err) {
+                    alert('삭제 중 오류가 발생했습니다: ' + err.message);
+                }
+            }
+            
+            // 조회 결과 전체 삭제
+            document.getElementById('deleteAllBtn').addEventListener('click', async () => {
+                if (currentRecords.length === 0) {
+                    alert('삭제할 레코드가 없습니다.');
+                    return;
+                }
+                
+                const confirmMsg = \`조회된 \${currentRecords.length}건의 레코드를 모두 삭제하시겠습니까?\\n\\n이 작업은 되돌릴 수 없습니다.\`;
+                
+                if (!confirm(confirmMsg)) {
+                    return;
+                }
+                
+                try {
+                    const recordIds = currentRecords.map(r => r.id);
+                    const response = await axios.post('/api/records/batch-delete', {
+                        record_ids: recordIds
+                    });
+                    
+                    if (response.data.success) {
+                        alert(response.data.message);
+                        document.getElementById('searchBtn').click(); // 목록 새로고침
+                    } else {
+                        alert('삭제 실패: ' + response.data.message);
+                    }
+                } catch (err) {
+                    alert('일괄 삭제 중 오류가 발생했습니다: ' + err.message);
+                }
+            });
+            
+            // 페이지 로드시 전체 데이터 조회
+            document.getElementById('searchBtn').click();
+                    </div>
+                    
+                    <!-- 이카운트 섹션 (초기 숨김) -->
+                    <div id="ecountSection" class="hidden">
+                        <!-- 업로드 섹션 -->
+                        <div class="bg-white rounded-lg shadow-md p-6 mb-8">
+                            <h2 class="text-2xl font-bold text-gray-800 mb-4">
+                                <i class="fas fa-upload mr-2"></i>
+                                이카운트 품목 업로드
+                            </h2>
+                            
+                            <form id="ecountUploadForm" class="space-y-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">
+                                        엑셀/CSV 파일 <span class="text-red-500">*</span>
+                                    </label>
+                                    <input type="file" id="ecountFile" accept=".xlsx,.xls,.csv"
+                                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" required>
+                                    <p class="text-sm text-gray-500 mt-1">
+                                        구매처명, 대분류, 중분류, 소분류, 품목코드, 품목명, 규격, 단위, 입고단가 등 포함
+                                    </p>
+                                </div>
+
+                                <button type="submit" 
+                                        class="w-full bg-blue-600 text-white py-3 px-6 rounded-lg hover:bg-blue-700 transition-colors">
+                                    <i class="fas fa-cloud-upload-alt mr-2"></i>
+                                    업로드
+                                </button>
+                            </form>
+
+                            <div id="ecountUploadResult" class="mt-4 hidden"></div>
+                        </div>
+
+                        <!-- 조회 섹션 -->
+                        <div class="bg-white rounded-lg shadow-md p-6 mb-8">
+                            <h2 class="text-2xl font-bold text-gray-800 mb-4">
+                                <i class="fas fa-search mr-2"></i>
+                                품목 조회
+                            </h2>
+
+                            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">구매처명</label>
+                                    <input type="text" id="filterSupplierName" 
+                                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                           placeholder="전체">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">대분류</label>
+                                    <input type="text" id="filterCategoryLarge" 
+                                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                           placeholder="전체">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">중분류</label>
+                                    <input type="text" id="filterCategoryMedium" 
+                                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                           placeholder="전체">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">소분류</label>
+                                    <input type="text" id="filterCategorySmall" 
+                                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                           placeholder="전체">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">품목코드</label>
+                                    <input type="text" id="filterProductCode" 
+                                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                           placeholder="전체">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">품목명</label>
+                                    <input type="text" id="filterProductNameEcount" 
+                                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                           placeholder="전체">
+                                </div>
+                                <div class="flex items-end">
+                                    <button id="searchEcountBtn" 
+                                            class="w-full bg-green-600 text-white py-2 px-6 rounded-lg hover:bg-green-700 transition-colors">
+                                        <i class="fas fa-search mr-2"></i>
+                                        조회
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 결과 테이블 -->
+                        <div class="bg-white rounded-lg shadow-md p-6">
+                            <div class="flex justify-between items-center mb-4">
+                                <div>
+                                    <h2 class="text-2xl font-bold text-gray-800">
+                                        <i class="fas fa-table mr-2"></i>
+                                        품목 목록
+                                    </h2>
+                                    <span id="ecountRecordCount" class="text-gray-600 text-sm"></span>
+                                </div>
+                            </div>
+
+                            <div class="overflow-x-auto">
+                                <table class="min-w-full divide-y divide-gray-200">
+                                    <thead class="bg-gray-50">
+                                        <tr>
+                                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">구매처</th>
+                                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">대분류</th>
+                                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">중분류</th>
+                                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">소분류</th>
+                                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">품목코드</th>
+                                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">품목명</th>
+                                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">규격</th>
+                                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">단위</th>
+                                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">입고단가</th>
+                                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">액션</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="ecountTableBody" class="bg-white divide-y divide-gray-200">
+                                        <tr>
+                                            <td colspan="10" class="px-4 py-8 text-center text-gray-500">
+                                                조회 버튼을 클릭하여 데이터를 조회하세요
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <!-- 페이지네이션 -->
+                            <div id="ecountPagination" class="mt-4 flex justify-center space-x-2"></div>
+                        </div>
+                    </div>
+                </main>
+            </div>
+        </div>
+        
+        <script src="https://cdn.jsdelivr.net/npm/axios@1.6.0/dist/axios.min.js"></script>
+        <script>
+            // 메뉴 전환
+            const menuEmr = document.getElementById('menuEmr');
+            const menuEcount = document.getElementById('menuEcount');
+            const emrSection = document.getElementById('emrSection');
+            const ecountSection = document.getElementById('ecountSection');
+            
+            menuEmr.addEventListener('click', () => {
+                menuEmr.classList.add('bg-blue-100', 'text-blue-700', 'font-medium');
+                menuEmr.classList.remove('text-gray-700');
+                menuEcount.classList.remove('bg-blue-100', 'text-blue-700', 'font-medium');
+                menuEcount.classList.add('text-gray-700');
+                emrSection.classList.remove('hidden');
+                ecountSection.classList.add('hidden');
+            });
+            
+            menuEcount.addEventListener('click', () => {
+                menuEcount.classList.add('bg-blue-100', 'text-blue-700', 'font-medium');
+                menuEcount.classList.remove('text-gray-700');
+                menuEmr.classList.remove('bg-blue-100', 'text-blue-700', 'font-medium');
+                menuEmr.classList.add('text-gray-700');
+                ecountSection.classList.remove('hidden');
+                emrSection.classList.add('hidden');
+            });
+            
+            // ===== 이카운트 섹션 스크립트 =====
+            
+            // 이카운트 업로드
+            document.getElementById('ecountUploadForm').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                
+                const file = document.getElementById('ecountFile').files[0];
+                if (!file) {
+                    alert('파일을 선택해주세요.');
+                    return;
+                }
+                
+                const formData = new FormData();
+                formData.append('file', file);
+                
+                const resultDiv = document.getElementById('ecountUploadResult');
+                resultDiv.className = 'mt-4 p-4 rounded-lg bg-blue-50 border border-blue-200';
+                resultDiv.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>처리 중...';
+                resultDiv.classList.remove('hidden');
+                
+                try {
+                    const response = await axios.post('/api/ecount/upload', formData);
+                    
+                    if (response.data.success) {
+                        resultDiv.className = 'mt-4 p-4 rounded-lg bg-green-50 border border-green-200 text-green-800';
+                        resultDiv.innerHTML = \`
+                            <div class="font-bold">
+                                <i class="fas fa-check-circle mr-2"></i>
+                                \${response.data.message}
+                            </div>
+                        \`;
+                        
+                        document.getElementById('ecountUploadForm').reset();
+                        document.getElementById('searchEcountBtn').click();
+                    }
+                } catch (err) {
+                    resultDiv.className = 'mt-4 p-4 rounded-lg bg-red-50 border border-red-200 text-red-800';
+                    resultDiv.innerHTML = \`
+                        <div class="font-bold">
+                            <i class="fas fa-exclamation-circle mr-2"></i>
+                            오류: \${err.response?.data?.message || err.message}
+                        </div>
+                    \`;
+                }
+            });
+            
+            // 이카운트 조회
+            let currentPage = 1;
+            
+            document.getElementById('searchEcountBtn').addEventListener('click', async () => {
+                currentPage = 1;
+                await loadEcountProducts(currentPage);
+            });
+            
+            async function loadEcountProducts(page) {
+                const params = new URLSearchParams();
+                params.append('page', page);
+                params.append('limit', '100');
+                
+                const supplierName = document.getElementById('filterSupplierName').value;
+                const categoryLarge = document.getElementById('filterCategoryLarge').value;
+                const categoryMedium = document.getElementById('filterCategoryMedium').value;
+                const categorySmall = document.getElementById('filterCategorySmall').value;
+                const productCode = document.getElementById('filterProductCode').value;
+                const productName = document.getElementById('filterProductNameEcount').value;
+                
+                if (supplierName) params.append('supplier_name', supplierName);
+                if (categoryLarge) params.append('category_large', categoryLarge);
+                if (categoryMedium) params.append('category_medium', categoryMedium);
+                if (categorySmall) params.append('category_small', categorySmall);
+                if (productCode) params.append('product_code', productCode);
+                if (productName) params.append('product_name', productName);
+                
+                try {
+                    const response = await axios.get(\`/api/ecount/products?\${params}\`);
+                    
+                    if (response.data.success) {
+                        displayEcountProducts(response.data.data);
+                        document.getElementById('ecountRecordCount').textContent = 
+                            \`총 \${response.data.total}건 (페이지 \${page}/\${response.data.totalPages})\`;
+                        renderPagination(page, response.data.totalPages);
+                    }
+                } catch (err) {
+                    alert('조회 중 오류: ' + err.message);
+                }
+            }
+            
+            function displayEcountProducts(products) {
+                const tbody = document.getElementById('ecountTableBody');
+                
+                if (products.length === 0) {
+                    tbody.innerHTML = \`
+                        <tr>
+                            <td colspan="10" class="px-4 py-8 text-center text-gray-500">
+                                조회된 데이터가 없습니다
+                            </td>
+                        </tr>
+                    \`;
+                    return;
+                }
+                
+                tbody.innerHTML = products.map(p => \`
+                    <tr class="hover:bg-gray-50">
+                        <td class="px-4 py-3 text-sm">\${p.supplier_name || '-'}</td>
+                        <td class="px-4 py-3 text-sm">\${p.category_large || '-'}</td>
+                        <td class="px-4 py-3 text-sm">\${p.category_medium || '-'}</td>
+                        <td class="px-4 py-3 text-sm">\${p.category_small || '-'}</td>
+                        <td class="px-4 py-3 text-sm font-mono">\${p.product_code || '-'}</td>
+                        <td class="px-4 py-3 text-sm font-medium">\${p.product_name}</td>
+                        <td class="px-4 py-3 text-sm">\${p.specification || '-'}</td>
+                        <td class="px-4 py-3 text-sm">\${p.unit || '-'}</td>
+                        <td class="px-4 py-3 text-sm text-right">\${(p.unit_price || 0).toLocaleString()}원</td>
+                        <td class="px-4 py-3 text-sm">
+                            <button onclick="deleteEcountProduct(\${p.id})" 
+                                    class="text-red-600 hover:text-red-800 px-3 py-1 rounded hover:bg-red-50 transition-colors">
+                                <i class="fas fa-trash mr-1"></i>삭제
+                            </button>
+                        </td>
+                    </tr>
+                \`).join('');
+            }
+            
+            function renderPagination(currentPage, totalPages) {
+                const pagination = document.getElementById('ecountPagination');
+                
+                if (totalPages <= 1) {
+                    pagination.innerHTML = '';
+                    return;
+                }
+                
+                let html = '';
+                
+                if (currentPage > 1) {
+                    html += \`<button onclick="loadEcountProducts(\${currentPage - 1})" 
+                                     class="px-3 py-1 rounded bg-white border hover:bg-gray-50">이전</button>\`;
+                }
+                
+                const startPage = Math.max(1, currentPage - 5);
+                const endPage = Math.min(totalPages, currentPage + 5);
+                
+                for (let i = startPage; i <= endPage; i++) {
+                    if (i === currentPage) {
+                        html += \`<button class="px-3 py-1 rounded bg-blue-600 text-white">\${i}</button>\`;
+                    } else {
+                        html += \`<button onclick="loadEcountProducts(\${i})" 
+                                         class="px-3 py-1 rounded bg-white border hover:bg-gray-50">\${i}</button>\`;
+                    }
+                }
+                
+                if (currentPage < totalPages) {
+                    html += \`<button onclick="loadEcountProducts(\${currentPage + 1})" 
+                                     class="px-3 py-1 rounded bg-white border hover:bg-gray-50">다음</button>\`;
+                }
+                
+                pagination.innerHTML = html;
+            }
+            
+            async function deleteEcountProduct(id) {
+                if (!confirm('이 품목을 삭제하시겠습니까?')) {
+                    return;
+                }
+                
+                try {
+                    const response = await axios.delete(\`/api/ecount/products/\${id}\`);
+                    
+                    if (response.data.success) {
+                        alert(response.data.message);
+                        await loadEcountProducts(currentPage);
+                    } else {
+                        alert('삭제 실패: ' + response.data.message);
+                    }
+                } catch (err) {
+                    alert('삭제 중 오류: ' + err.message);
+                }
+            }
+            
+            window.loadEcountProducts = loadEcountProducts;
+            window.deleteEcountProduct = deleteEcountProduct;
+        </script>
+    </body>
+    </html>
+  `);
+});
+
+/**
+ * 이카운트 품목 업로드 API
+ * POST /api/ecount/upload
+ */
+app.post('/api/ecount/upload', async (c) => {
+  try {
+    const formData = await c.req.formData();
+    const file = formData.get('file') as File | null;
+
+    if (!file) {
+      return c.json({ success: false, message: '파일을 선택해주세요.' }, 400);
+    }
+
+    const db = c.env.DB;
+    const buffer = await file.arrayBuffer();
+    const workbook = XLSX.read(buffer);
+    
+    // 첫 번째 시트 사용
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+    
+    const products = parseEcountProducts(sheet);
+    
+    if (products.length === 0) {
+      return c.json({ success: false, message: '유효한 품목 데이터가 없습니다.' }, 400);
+    }
+    
+    const count = await saveEcountProducts(db, products);
+    
+    return c.json({
+      success: true,
+      message: `${count}개의 품목이 저장되었습니다.`,
+      recordsProcessed: count
+    });
+  } catch (err) {
+    console.error('Ecount upload error:', err);
+    return c.json({
+      success: false,
+      message: `업로드 중 오류: ${err}`
+    }, 500);
+  }
+});
+
+/**
+ * 이카운트 품목 조회 API
+ * GET /api/ecount/products
+ */
+app.get('/api/ecount/products', async (c) => {
+  try {
+    const db = c.env.DB;
+    const page = parseInt(c.req.query('page') || '1');
+    const limit = parseInt(c.req.query('limit') || '100');
+    
+    const filters = {
+      supplier_name: c.req.query('supplier_name'),
+      category_large: c.req.query('category_large'),
+      category_medium: c.req.query('category_medium'),
+      category_small: c.req.query('category_small'),
+      product_code: c.req.query('product_code'),
+      product_name: c.req.query('product_name')
+    };
+    
+    const result = await queryEcountProducts(db, filters, page, limit);
+    
+    return c.json({
+      success: true,
+      data: result.products,
+      total: result.total,
+      page,
+      totalPages: Math.ceil(result.total / limit)
+    });
+  } catch (err) {
+    console.error('Ecount query error:', err);
+    return c.json({
+      success: false,
+      message: `조회 중 오류: ${err}`
+    }, 500);
+  }
+});
+
+/**
+ * 이카운트 품목 수정 API
+ * PUT /api/ecount/products/:id
+ */
+app.put('/api/ecount/products/:id', async (c) => {
+  try {
+    const id = parseInt(c.req.param('id'));
+    const product = await c.req.json();
+    const db = c.env.DB;
+    
+    const success = await updateEcountProduct(db, id, product);
+    
+    if (success) {
+      return c.json({
+        success: true,
+        message: '품목이 수정되었습니다.'
+      });
+    } else {
+      return c.json({
+        success: false,
+        message: '수정에 실패했습니다.'
+      }, 400);
+    }
+  } catch (err) {
+    console.error('Ecount update error:', err);
+    return c.json({
+      success: false,
+      message: `수정 중 오류: ${err}`
+    }, 500);
+  }
+});
+
+/**
+ * 이카운트 품목 삭제 API
+ * DELETE /api/ecount/products/:id
+ */
+app.delete('/api/ecount/products/:id', async (c) => {
+  try {
+    const id = parseInt(c.req.param('id'));
+    const db = c.env.DB;
+    
+    const success = await deleteEcountProduct(db, id);
+    
+    if (success) {
+      return c.json({
+        success: true,
+        message: '품목이 삭제되었습니다.'
+      });
+    } else {
+      return c.json({
+        success: false,
+        message: '삭제에 실패했습니다.'
+      }, 400);
+    }
+  } catch (err) {
+    console.error('Ecount delete error:', err);
+    return c.json({
+      success: false,
+      message: `삭제 중 오류: ${err}`
+    }, 500);
+  }
+});
+
+export default app;
