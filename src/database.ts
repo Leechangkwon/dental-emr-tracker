@@ -84,6 +84,7 @@ export async function saveImplantRecords(
 
 /**
  * 동종골 데이터 저장
+ * 동종골은 치식별로 나누지 않고 치료 기록 단위로 1번만 저장
  */
 export async function saveBoneGraftRecords(
   db: D1Database,
@@ -93,44 +94,45 @@ export async function saveBoneGraftRecords(
   let count = 0;
 
   for (const record of records) {
-    // 각 치아별로 레코드 생성
-    for (const tooth of record.teethSet) {
-      const treatmentId = await findOrCreateTreatmentRecord(
-        db,
-        branchName,
-        record.patientName,
-        record.chartNumber,
-        tooth
-      );
+    // 대표 치식(첫 번째 치아)으로 치료 기록 생성
+    const teeth = Array.from(record.teethSet);
+    const representativeTooth = teeth[0] || '';
 
-      // 각 품목별로 저장
-      for (const [productName, quantity] of record.products.entries()) {
-        // 거래처 결정
-        let supplier = '기타/미지정';
-        for (const [key, value] of Object.entries(VENDOR_MAP)) {
-          if (productName.toUpperCase().includes(key.toUpperCase())) {
-            supplier = value;
-            break;
-          }
+    const treatmentId = await findOrCreateTreatmentRecord(
+      db,
+      branchName,
+      record.patientName,
+      record.chartNumber,
+      representativeTooth
+    );
+
+    // 각 품목별로 저장 (치아 개수와 무관하게 1번만)
+    for (const [productName, quantity] of record.products.entries()) {
+      // 거래처 결정
+      let supplier = '기타/미지정';
+      for (const [key, value] of Object.entries(VENDOR_MAP)) {
+        if (productName.toUpperCase().includes(key.toUpperCase())) {
+          supplier = value;
+          break;
         }
-
-        await db
-          .prepare(
-            `INSERT INTO bone_graft (treatment_record_id, date, product_name, quantity, amount, supplier)
-             VALUES (?, ?, ?, ?, ?, ?)`
-          )
-          .bind(
-            treatmentId,
-            record.date,
-            productName,
-            quantity,
-            0, // 금액은 현재 0 (향후 확장)
-            supplier
-          )
-          .run();
-
-        count++;
       }
+
+      await db
+        .prepare(
+          `INSERT INTO bone_graft (treatment_record_id, date, product_name, quantity, amount, supplier)
+           VALUES (?, ?, ?, ?, ?, ?)`
+        )
+        .bind(
+          treatmentId,
+          record.date,
+          productName,
+          quantity,
+          0, // 금액은 현재 0 (향후 확장)
+          supplier
+        )
+        .run();
+
+      count++;
     }
   }
 
