@@ -39,18 +39,18 @@ export async function saveEcountProductsBatch(
               updated_at = CURRENT_TIMESTAMP`
           )
           .bind(
-            product.supplier_name,
-            product.image_url,
-            product.category_large,
-            product.category_medium,
-            product.category_small,
-            product.product_code,
+            product.supplier_name || null,
+            product.image_url || null,
+            product.category_large || null,
+            product.category_medium || null,
+            product.category_small || null,
+            product.product_code || null,
             product.product_name,
-            product.specification,
-            product.unit,
+            product.specification || null,
+            product.unit || null,
             product.unit_price || 0,
-            product.quantity_numerator,
-            product.quantity_denominator
+            product.quantity_numerator || null,
+            product.quantity_denominator || null
           )
           .run();
 

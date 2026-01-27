@@ -127,39 +127,39 @@ export function parseEcountProducts(sheet: XLSX.WorkSheet): EcountProduct[] {
     // 데이터 정리 및 생성
     const product: EcountProduct = {
       supplier_name: colMap['구매처명'] !== undefined 
-        ? cleanString(String(row[colMap['구매처명']] || '')) || undefined
-        : undefined,
+        ? cleanString(String(row[colMap['구매처명']] || '')) || null
+        : null,
       image_url: colMap['이미지'] !== undefined 
-        ? cleanString(String(row[colMap['이미지']] || '')) || undefined
-        : undefined,
+        ? cleanString(String(row[colMap['이미지']] || '')) || null
+        : null,
       category_large: colMap['대분류'] !== undefined 
-        ? cleanString(String(row[colMap['대분류']] || '')) || undefined
-        : undefined,
+        ? cleanString(String(row[colMap['대분류']] || '')) || null
+        : null,
       category_medium: colMap['중분류'] !== undefined 
-        ? cleanString(String(row[colMap['중분류']] || '')) || undefined
-        : undefined,
+        ? cleanString(String(row[colMap['중분류']] || '')) || null
+        : null,
       category_small: colMap['소분류'] !== undefined 
-        ? cleanString(String(row[colMap['소분류']] || '')) || undefined
-        : undefined,
+        ? cleanString(String(row[colMap['소분류']] || '')) || null
+        : null,
       product_code: colMap['품목코드'] !== undefined 
-        ? cleanString(String(row[colMap['품목코드']] || '')) || undefined
-        : undefined,
+        ? cleanString(String(row[colMap['품목코드']] || '')) || null
+        : null,
       product_name: productName,
       specification: colMap['규격'] !== undefined 
-        ? cleanString(String(row[colMap['규격']] || '')) || undefined
-        : undefined,
+        ? cleanString(String(row[colMap['규격']] || '')) || null
+        : null,
       unit: colMap['단위'] !== undefined 
-        ? cleanString(String(row[colMap['단위']] || '')) || undefined
-        : undefined,
+        ? cleanString(String(row[colMap['단위']] || '')) || null
+        : null,
       unit_price: colMap['입고단가'] !== undefined 
         ? parseNumber(row[colMap['입고단가']])
         : 0,
       quantity_numerator: colMap['당수량(분자)'] !== undefined 
-        ? parseNumber(row[colMap['당수량(분자)']]) || undefined
-        : undefined,
+        ? parseNumber(row[colMap['당수량(분자)']]) || null
+        : null,
       quantity_denominator: colMap['당수량(분모)'] !== undefined 
-        ? parseNumber(row[colMap['당수량(분모)']]) || undefined
-        : undefined
+        ? parseNumber(row[colMap['당수량(분모)']]) || null
+        : null
     };
     
     products.push(product);
