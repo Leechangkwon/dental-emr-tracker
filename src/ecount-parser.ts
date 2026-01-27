@@ -5,6 +5,23 @@ import { EcountProduct } from './types';
  * 이카운트 엑셀/CSV 파싱
  * 필요한 컬럼만 추출: 구매처명, 이미지, 대분류, 중분류, 소분류, 품목코드, 품목명, 규격, 단위, 입고단가, 당수량(분자), 당수량(분모)
  */
+/**
+ * 헤더 행 찾기: '품목명' 또는 '구매처명'이 있는 첫 번째 행
+ */
+function findHeaderRow(data: any[][]): number {
+  for (let i = 0; i < Math.min(data.length, 10); i++) {
+    const row = data[i];
+    const rowStr = row.map((cell: any) => cleanString(String(cell || ''))).join('|');
+    
+    // '품목명' 또는 '구매처명'이 있으면 헤더로 판단
+    if (rowStr.includes('품목명') || rowStr.includes('구매처명')) {
+      return i;
+    }
+  }
+  
+  return 0; // 못 찾으면 첫 번째 행
+}
+
 export function parseEcountProducts(sheet: XLSX.WorkSheet): EcountProduct[] {
   const products: EcountProduct[] = [];
   
@@ -18,8 +35,11 @@ export function parseEcountProducts(sheet: XLSX.WorkSheet): EcountProduct[] {
     return products; // 헤더만 있거나 데이터 없음
   }
   
+  // 헤더 행 자동 찾기
+  const headerRowIndex = findHeaderRow(data);
+  
   // 헤더 행에서 컬럼 인덱스 찾기 (공백 및 특수문자 제거)
-  const headers = data[0].map((h: any) => cleanString(String(h || '')));
+  const headers = data[headerRowIndex].map((h: any) => cleanString(String(h || '')));
   
   const colMap: Record<string, number> = {};
   const columnNames = [
@@ -51,8 +71,8 @@ export function parseEcountProducts(sheet: XLSX.WorkSheet): EcountProduct[] {
     }
   });
   
-  // 데이터 행 처리
-  for (let i = 1; i < data.length; i++) {
+  // 데이터 행 처리 (헤더 다음 행부터)
+  for (let i = headerRowIndex + 1; i < data.length; i++) {
     const row = data[i];
     
     // 빈 행 건너뛰기
