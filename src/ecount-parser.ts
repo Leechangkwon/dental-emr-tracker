@@ -2,6 +2,41 @@ import * as XLSX from 'xlsx';
 import { EcountProduct } from './types';
 
 /**
+ * 문자열 정리: 공백, 특수문자, BOM 제거
+ */
+function cleanString(str: string): string {
+  if (!str) return '';
+  
+  // BOM 제거
+  str = str.replace(/^\uFEFF/, '');
+  
+  // 앞뒤 공백 제거
+  str = str.trim();
+  
+  // 연속된 공백을 하나로
+  str = str.replace(/\s+/g, ' ');
+  
+  // 특수 공백 문자 제거 (non-breaking space 등)
+  str = str.replace(/[\u00A0\u2000-\u200B\u202F\u205F\u3000]/g, ' ');
+  
+  return str;
+}
+
+/**
+ * 숫자 파싱: 쉼표, 특수문자 제거
+ */
+function parseNumber(value: any): number {
+  if (typeof value === 'number') return value;
+  if (!value) return 0;
+  
+  // 문자열에서 숫자만 추출
+  const cleaned = String(value).replace(/[^\d.-]/g, '');
+  const num = parseFloat(cleaned);
+  
+  return isNaN(num) ? 0 : num;
+}
+
+/**
  * 이카운트 엑셀/CSV 파싱
  * 필요한 컬럼만 추출: 구매처명, 이미지, 대분류, 중분류, 소분류, 품목코드, 품목명, 규격, 단위, 입고단가, 당수량(분자), 당수량(분모)
  */
@@ -131,41 +166,6 @@ export function parseEcountProducts(sheet: XLSX.WorkSheet): EcountProduct[] {
   }
   
   return products;
-}
-
-/**
- * 문자열 정리: 공백, 특수문자, BOM 제거
- */
-function cleanString(str: string): string {
-  if (!str) return '';
-  
-  // BOM 제거
-  str = str.replace(/^\uFEFF/, '');
-  
-  // 앞뒤 공백 제거
-  str = str.trim();
-  
-  // 연속된 공백을 하나로
-  str = str.replace(/\s+/g, ' ');
-  
-  // 특수 공백 문자 제거 (non-breaking space 등)
-  str = str.replace(/[\u00A0\u2000-\u200B\u202F\u205F\u3000]/g, ' ');
-  
-  return str;
-}
-
-/**
- * 숫자 파싱: 쉼표, 특수문자 제거
- */
-function parseNumber(value: any): number {
-  if (typeof value === 'number') return value;
-  if (!value) return 0;
-  
-  // 문자열에서 숫자만 추출
-  const cleaned = String(value).replace(/[^\d.-]/g, '');
-  const num = parseFloat(cleaned);
-  
-  return isNaN(num) ? 0 : num;
 }
 
 /**
