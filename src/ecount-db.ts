@@ -1,12 +1,81 @@
 import { EcountProduct } from './types';
 
 /**
- * 이카운트 품목 저장
+ * 배치로 이카운트 품목 저장 (메모리 효율적)
+ */
+export async function saveEcountProductsBatch(
+  db: D1Database,
+  products: EcountProduct[],
+  batchSize: number = 100
+): Promise<number> {
+  let count = 0;
+  
+  // 배치 단위로 처리
+  for (let i = 0; i < products.length; i += batchSize) {
+    const batch = products.slice(i, i + batchSize);
+    
+    // 트랜잭션으로 배치 저장
+    for (const product of batch) {
+      try {
+        await db
+          .prepare(
+            `INSERT INTO ecount_products 
+             (supplier_name, image_url, category_large, category_medium, category_small, 
+              product_code, product_name, specification, unit, unit_price, 
+              quantity_numerator, quantity_denominator)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(product_code) DO UPDATE SET
+              supplier_name = excluded.supplier_name,
+              image_url = excluded.image_url,
+              category_large = excluded.category_large,
+              category_medium = excluded.category_medium,
+              category_small = excluded.category_small,
+              product_name = excluded.product_name,
+              specification = excluded.specification,
+              unit = excluded.unit,
+              unit_price = excluded.unit_price,
+              quantity_numerator = excluded.quantity_numerator,
+              quantity_denominator = excluded.quantity_denominator,
+              updated_at = CURRENT_TIMESTAMP`
+          )
+          .bind(
+            product.supplier_name,
+            product.image_url,
+            product.category_large,
+            product.category_medium,
+            product.category_small,
+            product.product_code,
+            product.product_name,
+            product.specification,
+            product.unit,
+            product.unit_price || 0,
+            product.quantity_numerator,
+            product.quantity_denominator
+          )
+          .run();
+
+        count++;
+      } catch (err) {
+        console.error('Failed to save product:', product.product_name, err);
+      }
+    }
+  }
+
+  return count;
+}
+
+/**
+ * 이카운트 품목 저장 (하위 호환성)
  */
 export async function saveEcountProducts(
   db: D1Database,
   products: EcountProduct[]
 ): Promise<number> {
+  // 500개 이상이면 배치 처리
+  if (products.length > 500) {
+    return saveEcountProductsBatch(db, products, 100);
+  }
+  
   let count = 0;
 
   for (const product of products) {

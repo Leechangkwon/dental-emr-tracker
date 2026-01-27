@@ -174,8 +174,15 @@ function decodeCSV(buffer: ArrayBuffer): string {
 
 /**
  * 파일 버퍼에서 이카운트 데이터 파싱
+ * @param buffer 파일 버퍼
+ * @param fileName 파일명
+ * @param maxRows 최대 행 수 제한 (기본: 5000, 0이면 무제한)
  */
-export async function parseEcountData(buffer: ArrayBuffer, fileName: string): Promise<EcountProduct[]> {
+export async function parseEcountData(
+  buffer: ArrayBuffer, 
+  fileName: string,
+  maxRows: number = 5000
+): Promise<EcountProduct[]> {
   let workbook: XLSX.WorkBook;
   
   const lowerName = fileName.toLowerCase();
@@ -188,12 +195,14 @@ export async function parseEcountData(buffer: ArrayBuffer, fileName: string): Pr
     workbook = XLSX.read(text, { 
       type: 'string',
       raw: false, // 타입 변환 활성화
-      codepage: 949 // EUC-KR/CP949 지원
+      codepage: 949, // EUC-KR/CP949 지원
+      sheetRows: maxRows > 0 ? maxRows + 1 : undefined // 헤더 + 최대 행 수
     });
   } else {
     // Excel 파일인 경우
     workbook = XLSX.read(buffer, {
-      raw: false // 타입 변환 활성화
+      raw: false, // 타입 변환 활성화
+      sheetRows: maxRows > 0 ? maxRows + 1 : undefined
     });
   }
   
