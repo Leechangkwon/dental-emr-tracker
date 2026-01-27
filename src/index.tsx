@@ -933,7 +933,184 @@ app.get('/', (c) => {
                 emrSection.classList.add('hidden');
             });
             
-            // ===== EMR 섹션 스크립트는 위에 이미 있음 =====
+            // ===== 이카운트 섹션 스크립트 =====
+            
+            // 이카운트 업로드
+            document.getElementById('ecountUploadForm').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                
+                const file = document.getElementById('ecountFile').files[0];
+                if (!file) {
+                    alert('파일을 선택해주세요.');
+                    return;
+                }
+                
+                const formData = new FormData();
+                formData.append('file', file);
+                
+                const resultDiv = document.getElementById('ecountUploadResult');
+                resultDiv.className = 'mt-4 p-4 rounded-lg bg-blue-50 border border-blue-200';
+                resultDiv.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>처리 중...';
+                resultDiv.classList.remove('hidden');
+                
+                try {
+                    const response = await axios.post('/api/ecount/upload', formData);
+                    
+                    if (response.data.success) {
+                        resultDiv.className = 'mt-4 p-4 rounded-lg bg-green-50 border border-green-200 text-green-800';
+                        resultDiv.innerHTML = \`
+                            <div class="font-bold">
+                                <i class="fas fa-check-circle mr-2"></i>
+                                \${response.data.message}
+                            </div>
+                        \`;
+                        
+                        document.getElementById('ecountUploadForm').reset();
+                        document.getElementById('searchEcountBtn').click();
+                    }
+                } catch (err) {
+                    resultDiv.className = 'mt-4 p-4 rounded-lg bg-red-50 border border-red-200 text-red-800';
+                    resultDiv.innerHTML = \`
+                        <div class="font-bold">
+                            <i class="fas fa-exclamation-circle mr-2"></i>
+                            오류: \${err.response?.data?.message || err.message}
+                        </div>
+                    \`;
+                }
+            });
+            
+            // 이카운트 조회
+            let currentPage = 1;
+            
+            document.getElementById('searchEcountBtn').addEventListener('click', async () => {
+                currentPage = 1;
+                await loadEcountProducts(currentPage);
+            });
+            
+            async function loadEcountProducts(page) {
+                const params = new URLSearchParams();
+                params.append('page', page);
+                params.append('limit', '100');
+                
+                const supplierName = document.getElementById('filterSupplierName').value;
+                const categoryLarge = document.getElementById('filterCategoryLarge').value;
+                const categoryMedium = document.getElementById('filterCategoryMedium').value;
+                const categorySmall = document.getElementById('filterCategorySmall').value;
+                const productCode = document.getElementById('filterProductCode').value;
+                const productName = document.getElementById('filterProductNameEcount').value;
+                
+                if (supplierName) params.append('supplier_name', supplierName);
+                if (categoryLarge) params.append('category_large', categoryLarge);
+                if (categoryMedium) params.append('category_medium', categoryMedium);
+                if (categorySmall) params.append('category_small', categorySmall);
+                if (productCode) params.append('product_code', productCode);
+                if (productName) params.append('product_name', productName);
+                
+                try {
+                    const response = await axios.get(\`/api/ecount/products?\${params}\`);
+                    
+                    if (response.data.success) {
+                        displayEcountProducts(response.data.data);
+                        document.getElementById('ecountRecordCount').textContent = 
+                            \`총 \${response.data.total}건 (페이지 \${page}/\${response.data.totalPages})\`;
+                        renderPagination(page, response.data.totalPages);
+                    }
+                } catch (err) {
+                    alert('조회 중 오류: ' + err.message);
+                }
+            }
+            
+            function displayEcountProducts(products) {
+                const tbody = document.getElementById('ecountTableBody');
+                
+                if (products.length === 0) {
+                    tbody.innerHTML = \`
+                        <tr>
+                            <td colspan="10" class="px-4 py-8 text-center text-gray-500">
+                                조회된 데이터가 없습니다
+                            </td>
+                        </tr>
+                    \`;
+                    return;
+                }
+                
+                tbody.innerHTML = products.map(p => \`
+                    <tr class="hover:bg-gray-50">
+                        <td class="px-4 py-3 text-sm">\${p.supplier_name || '-'}</td>
+                        <td class="px-4 py-3 text-sm">\${p.category_large || '-'}</td>
+                        <td class="px-4 py-3 text-sm">\${p.category_medium || '-'}</td>
+                        <td class="px-4 py-3 text-sm">\${p.category_small || '-'}</td>
+                        <td class="px-4 py-3 text-sm font-mono">\${p.product_code || '-'}</td>
+                        <td class="px-4 py-3 text-sm font-medium">\${p.product_name}</td>
+                        <td class="px-4 py-3 text-sm">\${p.specification || '-'}</td>
+                        <td class="px-4 py-3 text-sm">\${p.unit || '-'}</td>
+                        <td class="px-4 py-3 text-sm text-right">\${(p.unit_price || 0).toLocaleString()}원</td>
+                        <td class="px-4 py-3 text-sm">
+                            <button onclick="deleteEcountProduct(\${p.id})" 
+                                    class="text-red-600 hover:text-red-800 px-3 py-1 rounded hover:bg-red-50 transition-colors">
+                                <i class="fas fa-trash mr-1"></i>삭제
+                            </button>
+                        </td>
+                    </tr>
+                \`).join('');
+            }
+            
+            function renderPagination(currentPage, totalPages) {
+                const pagination = document.getElementById('ecountPagination');
+                
+                if (totalPages <= 1) {
+                    pagination.innerHTML = '';
+                    return;
+                }
+                
+                let html = '';
+                
+                if (currentPage > 1) {
+                    html += \`<button onclick="loadEcountProducts(\${currentPage - 1})" 
+                                     class="px-3 py-1 rounded bg-white border hover:bg-gray-50">이전</button>\`;
+                }
+                
+                const startPage = Math.max(1, currentPage - 5);
+                const endPage = Math.min(totalPages, currentPage + 5);
+                
+                for (let i = startPage; i <= endPage; i++) {
+                    if (i === currentPage) {
+                        html += \`<button class="px-3 py-1 rounded bg-blue-600 text-white">\${i}</button>\`;
+                    } else {
+                        html += \`<button onclick="loadEcountProducts(\${i})" 
+                                         class="px-3 py-1 rounded bg-white border hover:bg-gray-50">\${i}</button>\`;
+                    }
+                }
+                
+                if (currentPage < totalPages) {
+                    html += \`<button onclick="loadEcountProducts(\${currentPage + 1})" 
+                                     class="px-3 py-1 rounded bg-white border hover:bg-gray-50">다음</button>\`;
+                }
+                
+                pagination.innerHTML = html;
+            }
+            
+            async function deleteEcountProduct(id) {
+                if (!confirm('이 품목을 삭제하시겠습니까?')) {
+                    return;
+                }
+                
+                try {
+                    const response = await axios.delete(\`/api/ecount/products/\${id}\`);
+                    
+                    if (response.data.success) {
+                        alert(response.data.message);
+                        await loadEcountProducts(currentPage);
+                    } else {
+                        alert('삭제 실패: ' + response.data.message);
+                    }
+                } catch (err) {
+                    alert('삭제 중 오류: ' + err.message);
+                }
+            }
+            
+            window.loadEcountProducts = loadEcountProducts;
+            window.deleteEcountProduct = deleteEcountProduct;
         </script>
     </body>
     </html>
