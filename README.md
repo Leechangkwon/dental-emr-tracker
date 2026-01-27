@@ -11,7 +11,7 @@
 ## 🌐 URL
 
 - **개발 서버**: https://3000-i37uy0saj0poadfwjv784-c81df28e.sandbox.novita.ai
-- **GitHub**: (추후 추가)
+- **GitHub**: https://github.com/Leechangkwon/dental-emr-tracker
 
 ## 📊 데이터 구조
 
