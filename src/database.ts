@@ -85,6 +85,7 @@ export async function saveImplantRecords(
 /**
  * 동종골 데이터 저장
  * 동종골은 치식별로 나누지 않고 치료 기록 단위로 1번만 저장
+ * 나머지 치식에는 참조 메시지 생성
  */
 export async function saveBoneGraftRecords(
   db: D1Database,
@@ -94,11 +95,12 @@ export async function saveBoneGraftRecords(
   let count = 0;
 
   for (const record of records) {
-    // 대표 치식(첫 번째 치아)으로 치료 기록 생성
+    // 모든 치식 추출
     const teeth = Array.from(record.teethSet);
     const representativeTooth = teeth[0] || '';
 
-    const treatmentId = await findOrCreateTreatmentRecord(
+    // 대표 치식(첫 번째)에 실제 데이터 저장
+    const mainTreatmentId = await findOrCreateTreatmentRecord(
       db,
       branchName,
       record.patientName,
@@ -106,7 +108,7 @@ export async function saveBoneGraftRecords(
       representativeTooth
     );
 
-    // 각 품목별로 저장 (치아 개수와 무관하게 1번만)
+    // 각 품목별로 저장 (대표 치식에만)
     for (const [productName, quantity] of record.products.entries()) {
       // 거래처 결정
       let supplier = '기타/미지정';
@@ -123,12 +125,41 @@ export async function saveBoneGraftRecords(
            VALUES (?, ?, ?, ?, ?, ?)`
         )
         .bind(
-          treatmentId,
+          mainTreatmentId,
           record.date,
           productName,
           quantity,
           0, // 금액은 현재 0 (향후 확장)
           supplier
+        )
+        .run();
+
+      count++;
+    }
+
+    // 나머지 치식들에 참조 레코드 생성
+    for (let i = 1; i < teeth.length; i++) {
+      const refTreatmentId = await findOrCreateTreatmentRecord(
+        db,
+        branchName,
+        record.patientName,
+        record.chartNumber,
+        teeth[i]
+      );
+
+      // 참조 메시지 저장
+      await db
+        .prepare(
+          `INSERT INTO bone_graft (treatment_record_id, date, product_name, quantity, amount, supplier)
+           VALUES (?, ?, ?, ?, ?, ?)`
+        )
+        .bind(
+          refTreatmentId,
+          record.date,
+          `#${representativeTooth}에 합산됨`,
+          0,
+          0,
+          '참조'
         )
         .run();
 
