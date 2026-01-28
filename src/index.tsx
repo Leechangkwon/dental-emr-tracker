@@ -333,19 +333,23 @@ app.get('/api/ecount/products', async (c) => {
     const pageSize = parseInt(c.req.query('page_size') || '100')
     
     const result = await queryEcountProducts(db, {
-      supplierName,
-      categoryLarge,
-      categoryMedium,
-      categorySmall,
-      productCode,
-      productName,
-      page,
-      pageSize
-    })
+      supplier_name: supplierName,
+      category_large: categoryLarge,
+      category_medium: categoryMedium,
+      category_small: categorySmall,
+      product_code: productCode,
+      product_name: productName
+    }, page, pageSize)
+    
+    const totalPages = Math.ceil(result.total / pageSize)
     
     return c.json({
       success: true,
-      ...result
+      products: result.products,
+      totalCount: result.total,
+      totalPages: totalPages,
+      currentPage: page,
+      pageSize: pageSize
     })
   } catch (err) {
     console.error('Ecount query error:', err)
@@ -714,6 +718,55 @@ app.get('/', (c) => {
                         <div id="ecountPagination" class="mt-4 flex justify-center space-x-2"></div>
                     </div>
                 </div>
+
+                <!-- 매핑 테이블 섹션 (초기 숨김) -->
+                <div id="mappingSection" class="hidden">
+                    <div class="bg-white rounded-lg shadow-md p-6 mb-8">
+                        <h2 class="text-2xl font-bold text-gray-800 mb-4">
+                            <i class="fas fa-table mr-2"></i>
+                            매핑 테이블 관리
+                        </h2>
+                        
+                        <div class="flex space-x-4 mb-4">
+                            <button id="refreshMappingBtn" 
+                                    class="bg-green-600 text-white py-2 px-4 rounded-lg hover:bg-green-700 transition-colors">
+                                <i class="fas fa-sync mr-2"></i>
+                                최신화 (신규 품목명 추가)
+                            </button>
+                            <button id="downloadMappingBtn" 
+                                    class="bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors">
+                                <i class="fas fa-download mr-2"></i>
+                                다운로드 (CSV)
+                            </button>
+                            <label class="bg-purple-600 text-white py-2 px-4 rounded-lg hover:bg-purple-700 transition-colors cursor-pointer">
+                                <i class="fas fa-upload mr-2"></i>
+                                업로드 (CSV)
+                                <input type="file" id="mappingUploadFile" accept=".csv" class="hidden">
+                            </label>
+                        </div>
+
+                        <div class="mb-2 text-sm text-gray-600">
+                            총 <span id="mappingCount" class="font-bold">0</span>개 품목
+                        </div>
+
+                        <div class="overflow-x-auto">
+                            <table class="min-w-full bg-white border border-gray-300">
+                                <thead class="bg-gray-100">
+                                    <tr id="mappingTableHeader">
+                                        <th class="px-4 py-3 border-b text-left text-sm font-semibold text-gray-700">DB 품목명</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="mappingTableBody">
+                                    <tr>
+                                        <td colspan="1" class="px-4 py-8 text-center text-gray-500">
+                                            최신화 버튼을 클릭하여 품목명을 불러오세요
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
             </main>
 
             <!-- 수정 모달 -->
@@ -806,26 +859,28 @@ app.get('/', (c) => {
         // ===== 메뉴 전환 =====
         const menuEmr = document.getElementById('menuEmr');
         const menuEcount = document.getElementById('menuEcount');
+        const menuMapping = document.getElementById('menuMapping');
         const emrSection = document.getElementById('emrSection');
         const ecountSection = document.getElementById('ecountSection');
+        const mappingSection = document.getElementById('mappingSection');
 
-        menuEmr.addEventListener('click', () => {
-            menuEmr.classList.add('bg-blue-100', 'text-blue-700', 'font-medium');
-            menuEmr.classList.remove('text-gray-700');
-            menuEcount.classList.remove('bg-blue-100', 'text-blue-700', 'font-medium');
-            menuEcount.classList.add('text-gray-700');
-            emrSection.classList.remove('hidden');
-            ecountSection.classList.add('hidden');
-        });
+        function switchMenu(activeMenu, activeSection) {
+            [menuEmr, menuEcount, menuMapping].forEach(menu => {
+                menu.classList.remove('bg-blue-100', 'text-blue-700', 'font-medium');
+                menu.classList.add('text-gray-700');
+            });
+            [emrSection, ecountSection, mappingSection].forEach(section => {
+                section.classList.add('hidden');
+            });
+            
+            activeMenu.classList.add('bg-blue-100', 'text-blue-700', 'font-medium');
+            activeMenu.classList.remove('text-gray-700');
+            activeSection.classList.remove('hidden');
+        }
 
-        menuEcount.addEventListener('click', () => {
-            menuEcount.classList.add('bg-blue-100', 'text-blue-700', 'font-medium');
-            menuEcount.classList.remove('text-gray-700');
-            menuEmr.classList.remove('bg-blue-100', 'text-blue-700', 'font-medium');
-            menuEmr.classList.add('text-gray-700');
-            ecountSection.classList.remove('hidden');
-            emrSection.classList.add('hidden');
-        });
+        menuEmr.addEventListener('click', () => switchMenu(menuEmr, emrSection));
+        menuEcount.addEventListener('click', () => switchMenu(menuEcount, ecountSection));
+        menuMapping.addEventListener('click', () => switchMenu(menuMapping, mappingSection));
 
         // ===== EMR 섹션 스크립트 =====
         
