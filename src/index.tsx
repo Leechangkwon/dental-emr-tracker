@@ -389,33 +389,41 @@ app.post('/api/mapping/refresh', async (c) => {
   try {
     const db = c.env.DB
     
-    // 뼈이식과 임플란트에서 사용된 모든 고유 품목명 가져오기
-    const boneQuery = db.prepare(`SELECT DISTINCT product_name FROM bone_graft WHERE product_name IS NOT NULL AND product_name != '' ORDER BY product_name`)
-    const boneProducts = await boneQuery.all()
-    
-    const implantQuery = db.prepare(`SELECT DISTINCT product_name FROM implant WHERE product_name IS NOT NULL AND product_name != '' ORDER BY product_name`)
-    const implantProducts = await implantQuery.all()
+    // 모든 bone_graft와 implant 데이터 가져오기 (모든 컬럼)
+    const allBone = await db.prepare(`SELECT * FROM bone_graft LIMIT 100`).all()
+    const allImplant = await db.prepare(`SELECT * FROM implant LIMIT 100`).all()
     
     // 중복 제거하고 병합
     const allProducts = new Set()
-    if (boneProducts.results) {
-      boneProducts.results.forEach((row) => {
-        if (row.product_name) allProducts.add(row.product_name)
+    
+    if (allBone.results) {
+      allBone.results.forEach((row) => {
+        // product_name이라는 키를 찾아서 사용
+        const name = row['product_name'] || row['productName'] || row['PRODUCT_NAME']
+        if (name && name.trim() && name !== 'null' && name !== 'NULL') {
+          allProducts.add(name.trim())
+        }
       })
     }
-    if (implantProducts.results) {
-      implantProducts.results.forEach((row) => {
-        if (row.product_name) allProducts.add(row.product_name)
+    
+    if (allImplant.results) {
+      allImplant.results.forEach((row) => {
+        // product_name이라는 키를 찾아서 사용
+        const name = row['product_name'] || row['productName'] || row['PRODUCT_NAME']
+        if (name && name.trim() && name !== 'null' && name !== 'NULL') {
+          allProducts.add(name.trim())
+        }
       })
     }
     
     // 기존 매핑 테이블 조회
-    const existingMappings = await db.prepare(`SELECT product_name FROM product_mapping`).all()
+    const existingMappings = await db.prepare(`SELECT * FROM product_mapping`).all()
     
     const existingNames = new Set()
     if (existingMappings.results) {
       existingMappings.results.forEach((row) => {
-        if (row.product_name) existingNames.add(row.product_name)
+        const name = row['product_name'] || row['productName'] || row['PRODUCT_NAME']
+        if (name) existingNames.add(name)
       })
     }
     
@@ -430,7 +438,7 @@ app.post('/api/mapping/refresh', async (c) => {
     
     return c.json({
       success: true,
-      message: `${newCount}개의 신규 품목이 추가되었습니다.`,
+      message: `${newCount}개의 신규 품목이 추가되었습니다. (전체: ${allProducts.size}개)`,
       newCount,
       totalCount: allProducts.size
     })
