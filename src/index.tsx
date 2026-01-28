@@ -2224,6 +2224,132 @@ app.get('/', (c) => {
                 e.target.value = '';
             }
         });
+
+        // ===== 통계 섹션 스크립트 =====
+        
+        // 통계 불러오기
+        document.getElementById('loadBranchStatsBtn').addEventListener('click', async () => {
+            try {
+                const response = await axios.get('/api/statistics');
+                
+                if (response.data.success) {
+                    displayBranchStats(response.data.branchStats);
+                    displaySupplierStats(response.data.supplierStats);
+                } else {
+                    alert('통계 조회에 실패했습니다: ' + response.data.message);
+                }
+            } catch (err) {
+                alert('통계 조회 중 오류가 발생했습니다: ' + err.message);
+            }
+        });
+
+        // 지점별 통계 표시
+        function displayBranchStats(stats) {
+            const tableBody = document.getElementById('branchStatsTableBody');
+            const resultDiv = document.getElementById('branchStatsResult');
+            
+            resultDiv.classList.remove('hidden');
+            document.getElementById('branchStatsCount').textContent = stats.length;
+            
+            if (stats.length === 0) {
+                tableBody.innerHTML = '<tr><td colspan="7" class="px-4 py-8 text-center text-gray-500">조회된 데이터가 없습니다</td></tr>';
+                return;
+            }
+            
+            // 전체 금액 합계 계산
+            const totalAmount = stats.reduce((sum, stat) => 
+                sum + (parseFloat(stat.bone_amount) || 0) + (parseFloat(stat.implant_amount) || 0), 0
+            );
+            
+            tableBody.innerHTML = stats.map(stat => {
+                const boneAmount = parseFloat(stat.bone_amount) || 0;
+                const implantAmount = parseFloat(stat.implant_amount) || 0;
+                const totalBranchAmount = boneAmount + implantAmount;
+                const percentage = totalAmount > 0 ? ((totalBranchAmount / totalAmount) * 100).toFixed(1) : 0;
+                
+                return \`
+                    <tr class="border-b hover:bg-gray-50">
+                        <td class="px-4 py-3 font-medium">\${stat.branch_name}</td>
+                        <td class="px-4 py-3 text-center">\${stat.bone_quantity || 0}개</td>
+                        <td class="px-4 py-3 text-right">\${boneAmount.toLocaleString()}원</td>
+                        <td class="px-4 py-3 text-center">\${stat.implant_quantity || 0}개</td>
+                        <td class="px-4 py-3 text-right">\${implantAmount.toLocaleString()}원</td>
+                        <td class="px-4 py-3 text-right font-bold">\${totalBranchAmount.toLocaleString()}원</td>
+                        <td class="px-4 py-3 text-center">
+                            <span class="inline-block px-2 py-1 bg-blue-100 text-blue-800 rounded">\${percentage}%</span>
+                        </td>
+                    </tr>
+                \`;
+            }).join('');
+            
+            // 합계 행 추가
+            const totalBoneQty = stats.reduce((sum, stat) => sum + (parseInt(stat.bone_quantity) || 0), 0);
+            const totalBoneAmount = stats.reduce((sum, stat) => sum + (parseFloat(stat.bone_amount) || 0), 0);
+            const totalImplantQty = stats.reduce((sum, stat) => sum + (parseInt(stat.implant_quantity) || 0), 0);
+            const totalImplantAmount = stats.reduce((sum, stat) => sum + (parseFloat(stat.implant_amount) || 0), 0);
+            
+            tableBody.innerHTML += \`
+                <tr class="bg-gray-100 font-bold">
+                    <td class="px-4 py-3">합계</td>
+                    <td class="px-4 py-3 text-center">\${totalBoneQty}개</td>
+                    <td class="px-4 py-3 text-right">\${totalBoneAmount.toLocaleString()}원</td>
+                    <td class="px-4 py-3 text-center">\${totalImplantQty}개</td>
+                    <td class="px-4 py-3 text-right">\${totalImplantAmount.toLocaleString()}원</td>
+                    <td class="px-4 py-3 text-right">\${totalAmount.toLocaleString()}원</td>
+                    <td class="px-4 py-3 text-center">100%</td>
+                </tr>
+            \`;
+        }
+
+        // 거래처별 통계 표시
+        function displaySupplierStats(stats) {
+            const tableBody = document.getElementById('supplierStatsTableBody');
+            const resultDiv = document.getElementById('supplierStatsResult');
+            
+            resultDiv.classList.remove('hidden');
+            document.getElementById('supplierStatsCount').textContent = stats.length;
+            
+            if (stats.length === 0) {
+                tableBody.innerHTML = '<tr><td colspan="4" class="px-4 py-8 text-center text-gray-500">조회된 데이터가 없습니다</td></tr>';
+                return;
+            }
+            
+            // 전체 금액 합계 계산
+            const totalAmount = stats.reduce((sum, stat) => sum + (parseFloat(stat.total_amount) || 0), 0);
+            
+            tableBody.innerHTML = stats.map(stat => {
+                const amount = parseFloat(stat.total_amount) || 0;
+                const percentage = totalAmount > 0 ? ((amount / totalAmount) * 100).toFixed(1) : 0;
+                
+                return \`
+                    <tr class="border-b hover:bg-gray-50">
+                        <td class="px-4 py-3 font-medium">\${stat.supplier}</td>
+                        <td class="px-4 py-3 text-center">\${stat.total_quantity || 0}개</td>
+                        <td class="px-4 py-3 text-right font-bold">\${amount.toLocaleString()}원</td>
+                        <td class="px-4 py-3 text-center">
+                            <div class="flex items-center justify-center">
+                                <div class="w-32 bg-gray-200 rounded-full h-6 mr-2">
+                                    <div class="bg-blue-600 h-6 rounded-full" style="width: \${percentage}%"></div>
+                                </div>
+                                <span class="font-bold">\${percentage}%</span>
+                            </div>
+                        </td>
+                    </tr>
+                \`;
+            }).join('');
+            
+            // 합계 행 추가
+            const totalQty = stats.reduce((sum, stat) => sum + (parseInt(stat.total_quantity) || 0), 0);
+            
+            tableBody.innerHTML += \`
+                <tr class="bg-gray-100 font-bold">
+                    <td class="px-4 py-3">합계</td>
+                    <td class="px-4 py-3 text-center">\${totalQty}개</td>
+                    <td class="px-4 py-3 text-right">\${totalAmount.toLocaleString()}원</td>
+                    <td class="px-4 py-3 text-center">100%</td>
+                </tr>
+            \`;
+        }
     </script>
 </body>
 </html>
