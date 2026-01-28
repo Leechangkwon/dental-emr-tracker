@@ -382,6 +382,117 @@ app.delete('/api/ecount/products/:id', async (c) => {
   }
 })
 
+// ===== 지점별 통계 API =====
+
+// 지점별 통계 조회
+app.get('/api/stats', async (c) => {
+  try {
+    const db = c.env.DB
+    const startDate = c.req.query('start_date')
+    const endDate = c.req.query('end_date')
+    
+    let dateFilter = ''
+    const params: any[] = []
+    
+    if (startDate && endDate) {
+      dateFilter = 'AND tr.created_at BETWEEN ? AND ?'
+      params.push(startDate, endDate + ' 23:59:59')
+    } else if (startDate) {
+      dateFilter = 'AND tr.created_at >= ?'
+      params.push(startDate)
+    } else if (endDate) {
+      dateFilter = 'AND tr.created_at <= ?'
+      params.push(endDate + ' 23:59:59')
+    }
+    
+    // 지점별 뼈이식 통계
+    const boneSql = `
+      SELECT 
+        tr.branch_name,
+        SUM(bg.quantity) as bone_quantity,
+        SUM(bg.amount) as bone_amount
+      FROM treatment_records tr
+      INNER JOIN bone_graft bg ON tr.id = bg.treatment_record_id
+      WHERE bg.reference_tooth IS NULL ${dateFilter}
+      GROUP BY tr.branch_name
+    `
+    
+    const boneStats = await db.prepare(boneSql).bind(...params).all()
+    
+    // 지점별 임플란트 통계
+    const implantSql = `
+      SELECT 
+        tr.branch_name,
+        SUM(i.quantity) as implant_quantity,
+        SUM(i.amount) as implant_amount
+      FROM treatment_records tr
+      INNER JOIN implant i ON tr.id = i.treatment_record_id
+      WHERE i.supplier != 'GBR Only' ${dateFilter}
+      GROUP BY tr.branch_name
+    `
+    
+    const implantStats = await db.prepare(implantSql).bind(...params).all()
+    
+    // 지점별로 합치기
+    const branchMap = new Map<string, any>()
+    
+    boneStats.results?.forEach((row: any) => {
+      const branch = row.branch_name
+      if (!branchMap.has(branch)) {
+        branchMap.set(branch, {
+          branch_name: branch,
+          bone_quantity: 0,
+          bone_amount: 0,
+          implant_quantity: 0,
+          implant_amount: 0,
+          total_amount: 0
+        })
+      }
+      const data = branchMap.get(branch)
+      data.bone_quantity = row.bone_quantity || 0
+      data.bone_amount = row.bone_amount || 0
+      data.total_amount += data.bone_amount
+    })
+    
+    implantStats.results?.forEach((row: any) => {
+      const branch = row.branch_name
+      if (!branchMap.has(branch)) {
+        branchMap.set(branch, {
+          branch_name: branch,
+          bone_quantity: 0,
+          bone_amount: 0,
+          implant_quantity: 0,
+          implant_amount: 0,
+          total_amount: 0
+        })
+      }
+      const data = branchMap.get(branch)
+      data.implant_quantity = row.implant_quantity || 0
+      data.implant_amount = row.implant_amount || 0
+      data.total_amount += data.implant_amount
+    })
+    
+    const stats = Array.from(branchMap.values())
+    
+    // 전체 합계
+    const totalCount = stats.reduce((sum, s) => sum + s.bone_quantity + s.implant_quantity, 0)
+    const totalAmount = stats.reduce((sum, s) => sum + s.total_amount, 0)
+    
+    return c.json({
+      success: true,
+      stats,
+      totalCount,
+      totalAmount
+    })
+  } catch (err) {
+    console.error('Stats error:', err)
+    return c.json({ 
+      success: false, 
+      message: `통계 조회 중 오류가 발생했습니다: ${err}` 
+    }, 500)
+  }
+})
+
 // ===== 매핑 테이블 API =====
 
 // 최신화: EMR에서 사용된 모든 품목명 가져오기
@@ -533,6 +644,57 @@ app.post('/api/mapping/batch-save', async (c) => {
   }
 })
 
+// 통계 API
+app.get('/api/statistics', async (c) => {
+  try {
+    const db = c.env.DB
+    
+    // 지점별 통계
+    const branchStats = await db.prepare(`
+      SELECT 
+        tr.branch_name,
+        COUNT(DISTINCT tr.id) as record_count,
+        COALESCE(SUM(bg.quantity), 0) as bone_quantity,
+        COALESCE(SUM(bg.amount), 0) as bone_amount,
+        COALESCE(SUM(im.quantity), 0) as implant_quantity,
+        COALESCE(SUM(im.amount), 0) as implant_amount
+      FROM treatment_records tr
+      LEFT JOIN bone_graft bg ON tr.id = bg.treatment_record_id AND bg.reference_tooth IS NULL
+      LEFT JOIN implant im ON tr.id = im.treatment_record_id
+      GROUP BY tr.branch_name
+      ORDER BY tr.branch_name
+    `).all()
+    
+    // 거래처별 통계
+    const supplierStats = await db.prepare(`
+      SELECT 
+        supplier,
+        SUM(quantity) as total_quantity,
+        SUM(amount) as total_amount
+      FROM (
+        SELECT supplier, quantity, amount FROM bone_graft WHERE reference_tooth IS NULL
+        UNION ALL
+        SELECT supplier, quantity, amount FROM implant
+      )
+      WHERE supplier IS NOT NULL AND supplier != ''
+      GROUP BY supplier
+      ORDER BY total_amount DESC
+    `).all()
+    
+    return c.json({
+      success: true,
+      branchStats: branchStats.results || [],
+      supplierStats: supplierStats.results || []
+    })
+  } catch (err) {
+    console.error('Statistics error:', err)
+    return c.json({ 
+      success: false, 
+      message: `통계 조회 중 오류가 발생했습니다: ${err}` 
+    }, 500)
+  }
+})
+
 // ===== 메인 페이지 =====
 app.get('/', (c) => {
   return c.html(`
@@ -573,6 +735,10 @@ app.get('/', (c) => {
                     <button id="menuMapping" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 transition-colors text-gray-700">
                         <i class="fas fa-table mr-2"></i>
                         매핑 테이블 관리
+                    </button>
+                    <button id="menuStats" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 transition-colors text-gray-700">
+                        <i class="fas fa-chart-bar mr-2"></i>
+                        지점별 통계
                     </button>
                 </nav>
             </aside>
@@ -930,6 +1096,86 @@ app.get('/', (c) => {
                         </div>
                     </div>
                 </div>
+
+                <!-- 지점별 통계 섹션 -->
+                <div id="statsSection" class="hidden">
+                    <!-- 지점별 통계 -->
+                    <div class="bg-white rounded-lg shadow-md p-6 mb-8">
+                        <h2 class="text-2xl font-bold text-gray-800 mb-4">
+                            <i class="fas fa-map-marker-alt mr-2"></i>
+                            지점별 통계
+                        </h2>
+                        
+                        <button id="loadBranchStatsBtn" 
+                                class="bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors mb-4">
+                            <i class="fas fa-sync mr-2"></i>
+                            통계 불러오기
+                        </button>
+
+                        <div id="branchStatsResult" class="hidden">
+                            <div class="mb-4 text-sm text-gray-600">
+                                전체 지점 <span id="branchStatsCount" class="font-bold">0</span>개
+                            </div>
+
+                            <div class="overflow-x-auto">
+                                <table class="min-w-full bg-white border border-gray-300">
+                                    <thead class="bg-gray-100">
+                                        <tr>
+                                            <th class="px-4 py-3 border-b text-left text-sm font-semibold text-gray-700">지점명</th>
+                                            <th class="px-4 py-3 border-b text-center text-sm font-semibold text-gray-700">뼈이식 수량</th>
+                                            <th class="px-4 py-3 border-b text-right text-sm font-semibold text-gray-700">뼈이식 금액</th>
+                                            <th class="px-4 py-3 border-b text-center text-sm font-semibold text-gray-700">임플란트 수량</th>
+                                            <th class="px-4 py-3 border-b text-right text-sm font-semibold text-gray-700">임플란트 금액</th>
+                                            <th class="px-4 py-3 border-b text-right text-sm font-semibold text-gray-700">합계 금액</th>
+                                            <th class="px-4 py-3 border-b text-center text-sm font-semibold text-gray-700">비중 (%)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="branchStatsTableBody">
+                                        <tr>
+                                            <td colspan="7" class="px-4 py-8 text-center text-gray-500">
+                                                통계 불러오기 버튼을 클릭하세요
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 거래처별 통계 -->
+                    <div class="bg-white rounded-lg shadow-md p-6 mb-8">
+                        <h2 class="text-2xl font-bold text-gray-800 mb-4">
+                            <i class="fas fa-truck mr-2"></i>
+                            거래처별 통계
+                        </h2>
+
+                        <div id="supplierStatsResult" class="hidden">
+                            <div class="mb-4 text-sm text-gray-600">
+                                전체 거래처 <span id="supplierStatsCount" class="font-bold">0</span>개
+                            </div>
+
+                            <div class="overflow-x-auto">
+                                <table class="min-w-full bg-white border border-gray-300">
+                                    <thead class="bg-gray-100">
+                                        <tr>
+                                            <th class="px-4 py-3 border-b text-left text-sm font-semibold text-gray-700">거래처명</th>
+                                            <th class="px-4 py-3 border-b text-center text-sm font-semibold text-gray-700">총 수량</th>
+                                            <th class="px-4 py-3 border-b text-right text-sm font-semibold text-gray-700">총 금액</th>
+                                            <th class="px-4 py-3 border-b text-center text-sm font-semibold text-gray-700">금액 비중 (%)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="supplierStatsTableBody">
+                                        <tr>
+                                            <td colspan="4" class="px-4 py-8 text-center text-gray-500">
+                                                통계 불러오기 버튼을 클릭하세요
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </main>
 
             <!-- 수정 모달 -->
@@ -1023,16 +1269,18 @@ app.get('/', (c) => {
         const menuEmr = document.getElementById('menuEmr');
         const menuEcount = document.getElementById('menuEcount');
         const menuMapping = document.getElementById('menuMapping');
+        const menuStats = document.getElementById('menuStats');
         const emrSection = document.getElementById('emrSection');
         const ecountSection = document.getElementById('ecountSection');
         const mappingSection = document.getElementById('mappingSection');
+        const statsSection = document.getElementById('statsSection');
 
         function switchMenu(activeMenu, activeSection) {
-            [menuEmr, menuEcount, menuMapping].forEach(menu => {
+            [menuEmr, menuEcount, menuMapping, menuStats].forEach(menu => {
                 menu.classList.remove('bg-blue-100', 'text-blue-700', 'font-medium');
                 menu.classList.add('text-gray-700');
             });
-            [emrSection, ecountSection, mappingSection].forEach(section => {
+            [emrSection, ecountSection, mappingSection, statsSection].forEach(section => {
                 section.classList.add('hidden');
             });
             
@@ -1044,6 +1292,7 @@ app.get('/', (c) => {
         menuEmr.addEventListener('click', () => switchMenu(menuEmr, emrSection));
         menuEcount.addEventListener('click', () => switchMenu(menuEcount, ecountSection));
         menuMapping.addEventListener('click', () => switchMenu(menuMapping, mappingSection));
+        menuStats.addEventListener('click', () => switchMenu(menuStats, statsSection));
 
         // ===== EMR 섹션 스크립트 =====
         
@@ -1684,6 +1933,86 @@ app.get('/', (c) => {
                 alert('수정 중 오류가 발생했습니다: ' + err.message);
             }
         });
+
+        // ===== 지점별 통계 스크립트 =====
+        
+        // 오늘 날짜를 기본값으로 설정
+        const today = new Date().toISOString().split('T')[0];
+        document.getElementById('statsEndDate').value = today;
+        
+        // 통계 조회
+        document.getElementById('statsSearchBtn').addEventListener('click', async () => {
+            const startDate = document.getElementById('statsStartDate').value;
+            const endDate = document.getElementById('statsEndDate').value;
+            
+            const params = new URLSearchParams();
+            if (startDate) params.append('start_date', startDate);
+            if (endDate) params.append('end_date', endDate);
+            
+            try {
+                const response = await axios.get(\`/api/stats?\${params.toString()}\`);
+                
+                if (response.data.success) {
+                    displayStats(response.data.stats, response.data.totalCount, response.data.totalAmount);
+                } else {
+                    alert('조회에 실패했습니다: ' + response.data.message);
+                }
+            } catch (err) {
+                alert('조회 중 오류가 발생했습니다: ' + err.message);
+            }
+        });
+        
+        function displayStats(stats, totalCount, totalAmount) {
+            const resultDiv = document.getElementById('statsResult');
+            const tableBody = document.getElementById('statsTableBody');
+            
+            if (stats.length === 0) {
+                tableBody.innerHTML = \`
+                    <tr>
+                        <td colspan="6" class="px-4 py-8 text-center text-gray-500">
+                            조회된 데이터가 없습니다
+                        </td>
+                    </tr>
+                \`;
+                resultDiv.classList.add('hidden');
+                return;
+            }
+            
+            resultDiv.classList.remove('hidden');
+            
+            // 합계 표시
+            document.getElementById('statsTotalCount').textContent = totalCount.toLocaleString();
+            document.getElementById('statsTotalAmount').textContent = totalAmount.toLocaleString();
+            
+            // 테이블 생성
+            tableBody.innerHTML = stats.map(stat => \`
+                <tr class="border-b hover:bg-gray-50">
+                    <td class="px-4 py-3">\${stat.branch_name}</td>
+                    <td class="px-4 py-3 text-center">\${stat.bone_quantity.toLocaleString()}</td>
+                    <td class="px-4 py-3 text-right">\${stat.bone_amount.toLocaleString()}원</td>
+                    <td class="px-4 py-3 text-center">\${stat.implant_quantity.toLocaleString()}</td>
+                    <td class="px-4 py-3 text-right">\${stat.implant_amount.toLocaleString()}원</td>
+                    <td class="px-4 py-3 text-right font-bold">\${stat.total_amount.toLocaleString()}원</td>
+                </tr>
+            \`).join('');
+            
+            // 합계 행 추가
+            const totalBoneQty = stats.reduce((sum, s) => sum + s.bone_quantity, 0);
+            const totalBoneAmount = stats.reduce((sum, s) => sum + s.bone_amount, 0);
+            const totalImplantQty = stats.reduce((sum, s) => sum + s.implant_quantity, 0);
+            const totalImplantAmount = stats.reduce((sum, s) => sum + s.implant_amount, 0);
+            
+            tableBody.innerHTML += \`
+                <tr class="bg-blue-50 font-bold">
+                    <td class="px-4 py-3">합계</td>
+                    <td class="px-4 py-3 text-center">\${totalBoneQty.toLocaleString()}</td>
+                    <td class="px-4 py-3 text-right">\${totalBoneAmount.toLocaleString()}원</td>
+                    <td class="px-4 py-3 text-center">\${totalImplantQty.toLocaleString()}</td>
+                    <td class="px-4 py-3 text-right">\${totalImplantAmount.toLocaleString()}원</td>
+                    <td class="px-4 py-3 text-right">\${totalAmount.toLocaleString()}원</td>
+                </tr>
+            \`;
+        }
 
         // ===== 매핑 테이블 스크립트 =====
         
