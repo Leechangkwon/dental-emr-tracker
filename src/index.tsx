@@ -1159,46 +1159,66 @@ app.get('/', (c) => {
             
             deleteAllBtn.classList.remove('hidden');
             
-            // 합계 계산
+            // 합계 계산 (수량과 금액)
             let boneTotalQty = 0;
+            let boneTotalAmount = 0;
             let implantTotalQty = 0;
+            let implantTotalAmount = 0;
             
             records.forEach(record => {
                 record.bone_graft?.forEach(b => {
                     if (b.quantity > 0 && !b.reference_tooth) {
                         boneTotalQty += b.quantity || 0;
+                        boneTotalAmount += b.amount || 0;
                     }
                 });
                 
                 record.implant?.forEach(i => {
                     if (i.supplier !== 'GBR Only') {
                         implantTotalQty += i.quantity || 0;
+                        implantTotalAmount += i.amount || 0;
                     }
                 });
             });
             
-            document.getElementById('boneTotal').textContent = boneTotalQty > 0 ? \`(합계: \${boneTotalQty})\` : '';
-            document.getElementById('implantTotal').textContent = implantTotalQty > 0 ? \`(합계: \${implantTotalQty})\` : '';
+            // 수량 및 금액 합계 표시
+            const boneTotalText = boneTotalQty > 0 
+                ? \`(수량: \${boneTotalQty}, 금액: \${boneTotalAmount.toLocaleString()}원)\` 
+                : '';
+            const implantTotalText = implantTotalQty > 0 
+                ? \`(수량: \${implantTotalQty}, 금액: \${implantTotalAmount.toLocaleString()}원)\` 
+                : '';
+            
+            document.getElementById('boneTotal').textContent = boneTotalText;
+            document.getElementById('implantTotal').textContent = implantTotalText;
             
             tableBody.innerHTML = records.map(record => {
                 const boneInfo = record.bone_graft?.map(b => {
-                    const displayQty = b.reference_tooth ? \`#\${b.reference_tooth.replace('#', '')}에 포함\` : b.quantity;
+                    const displayQty = b.reference_tooth 
+                        ? \`#\${b.reference_tooth.replace('#', '')}에 포함\` 
+                        : \`\${b.quantity}개\`;
+                    const displayAmount = !b.reference_tooth && b.amount > 0 
+                        ? \` (금액: \${b.amount.toLocaleString()}원)\` 
+                        : '';
                     return \`
                         <div class="text-xs mb-1 p-2 bg-gray-50 rounded">
                             <div class="font-medium">\${new Date(b.date).toLocaleDateString('ko-KR')}</div>
                             <div>\${b.product_name || '-'}</div>
-                            <div class="text-gray-600">수량: \${displayQty} | \${b.supplier || '-'}</div>
+                            <div class="text-gray-600">수량: \${displayQty}\${displayAmount} | \${b.supplier || '-'}</div>
                         </div>
                     \`;
                 }).join('') || '-';
                 
                 const implantInfo = record.implant?.map(i => {
                     const insuranceBadge = i.is_insurance ? '<span class="text-xs bg-green-100 text-green-800 px-2 py-1 rounded ml-2">보험</span>' : '';
+                    const displayAmount = i.amount > 0 
+                        ? \` (금액: \${i.amount.toLocaleString()}원)\` 
+                        : '';
                     return \`
                         <div class="text-xs mb-1 p-2 bg-gray-50 rounded">
                             <div class="font-medium">\${new Date(i.date).toLocaleDateString('ko-KR')}</div>
                             <div>\${i.product_name || '-'}\${insuranceBadge}</div>
-                            <div class="text-gray-600">수량: \${i.quantity} | \${i.supplier || '-'}</div>
+                            <div class="text-gray-600">수량: \${i.quantity}개\${displayAmount} | \${i.supplier || '-'}</div>
                         </div>
                     \`;
                 }).join('') || '-';

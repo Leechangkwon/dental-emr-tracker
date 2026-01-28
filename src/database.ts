@@ -3,6 +3,71 @@ import { ImplantRecord, BoneGraftRecord } from './parser';
 import { VENDOR_MAP } from './utils';
 
 /**
+ * 매핑 테이블에서 품목코드 조회
+ */
+async function getProductCode(db: D1Database, productName: string, branchName: string): Promise<string | null> {
+  try {
+    const mapping = await db
+      .prepare(`SELECT branch_codes FROM product_mapping WHERE product_name = ?`)
+      .bind(productName)
+      .first<{ branch_codes: string }>();
+    
+    if (!mapping || !mapping.branch_codes) {
+      return null;
+    }
+    
+    const branchCodes = JSON.parse(mapping.branch_codes);
+    return branchCodes[branchName] || null;
+  } catch (err) {
+    console.error('매핑 조회 오류:', err);
+    return null;
+  }
+}
+
+/**
+ * 이카운트 품목에서 단가 조회
+ */
+async function getUnitPrice(db: D1Database, productCode: string): Promise<number> {
+  try {
+    const product = await db
+      .prepare(`SELECT unit_price FROM ecount_products WHERE product_code = ?`)
+      .bind(productCode)
+      .first<{ unit_price: number | null }>();
+    
+    return product?.unit_price || 0;
+  } catch (err) {
+    console.error('단가 조회 오류:', err);
+    return 0;
+  }
+}
+
+/**
+ * 금액 계산 (수량 × 단가)
+ */
+async function calculateAmount(
+  db: D1Database, 
+  productName: string, 
+  branchName: string, 
+  quantity: number
+): Promise<number> {
+  const productCode = await getProductCode(db, productName, branchName);
+  if (!productCode) {
+    console.log(`[금액 계산] 매핑 없음: ${productName} (${branchName})`);
+    return 0;
+  }
+  
+  const unitPrice = await getUnitPrice(db, productCode);
+  if (unitPrice === 0) {
+    console.log(`[금액 계산] 단가 없음: ${productCode}`);
+    return 0;
+  }
+  
+  const amount = quantity * unitPrice;
+  console.log(`[금액 계산] ${productName} (${branchName}) → ${productCode} → ${unitPrice}원 × ${quantity} = ${amount}원`);
+  return amount;
+}
+
+/**
  * 치료 기록 저장 또는 조회
  */
 export async function findOrCreateTreatmentRecord(
@@ -48,6 +113,9 @@ export async function saveImplantRecords(
   let count = 0;
 
   for (const record of records) {
+    // 금액 계산 (치아별로 1개씩)
+    const amount = await calculateAmount(db, record.productName, branchName, 1);
+    
     // 각 치아별로 레코드 생성
     for (const tooth of record.teethSet) {
       const treatmentId = await findOrCreateTreatmentRecord(
@@ -69,7 +137,7 @@ export async function saveImplantRecords(
           record.date,
           record.productName,
           1, // 치아별로 1개씩
-          0, // 금액은 현재 0 (향후 확장)
+          amount, // 계산된 금액
           record.supplier,
           record.isInsurance ? 1 : 0
         )
@@ -119,6 +187,9 @@ export async function saveBoneGraftRecords(
         }
       }
 
+      // 금액 계산
+      const amount = await calculateAmount(db, productName, branchName, quantity);
+
       await db
         .prepare(
           `INSERT INTO bone_graft (treatment_record_id, date, product_name, quantity, amount, supplier, reference_tooth)
@@ -129,7 +200,7 @@ export async function saveBoneGraftRecords(
           record.date,
           productName,
           quantity,
-          0, // 금액은 현재 0 (향후 확장)
+          amount, // 계산된 금액
           supplier,
           null // 대표 치식은 참조 없음
         )
