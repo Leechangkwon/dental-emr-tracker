@@ -415,6 +415,10 @@ app.get('/', (c) => {
                         <i class="fas fa-box mr-2"></i>
                         이카운트 품목 관리
                     </button>
+                    <button id="menuMapping" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 transition-colors text-gray-700">
+                        <i class="fas fa-table mr-2"></i>
+                        매핑 테이블 관리
+                    </button>
                 </nav>
             </aside>
 
@@ -537,16 +541,21 @@ app.get('/', (c) => {
                             조회 결과: <span id="recordCount" class="font-bold">0</span>건
                         </div>
 
-                        <button id="deleteAllBtn" 
-                                class="mb-4 bg-red-600 text-white py-2 px-4 rounded-lg hover:bg-red-700 transition-colors hidden">
-                            <i class="fas fa-trash mr-2"></i>
-                            조회 결과 전체 삭제
-                        </button>
+                        <div class="flex space-x-4 mb-4">
+                            <button id="deleteAllBtn" 
+                                    class="hidden bg-red-600 text-white py-2 px-4 rounded-lg hover:bg-red-700 transition-colors">
+                                <i class="fas fa-trash mr-2"></i>
+                                선택 삭제 (<span id="emrSelectedCount">0</span>)
+                            </button>
+                        </div>
 
                         <div class="overflow-x-auto">
                             <table class="min-w-full bg-white border border-gray-300">
                                 <thead class="bg-gray-100">
                                     <tr>
+                                        <th class="px-4 py-3 border-b text-center text-sm font-semibold text-gray-700">
+                                            <input type="checkbox" id="selectAllEmr" class="w-4 h-4 cursor-pointer">
+                                        </th>
                                         <th class="px-4 py-3 border-b text-left text-sm font-semibold text-gray-700">지점</th>
                                         <th class="px-4 py-3 border-b text-left text-sm font-semibold text-gray-700">환자명</th>
                                         <th class="px-4 py-3 border-b text-left text-sm font-semibold text-gray-700">차트번호</th>
@@ -563,7 +572,7 @@ app.get('/', (c) => {
                                 </thead>
                                 <tbody id="resultTableBody">
                                     <tr>
-                                        <td colspan="8" class="px-4 py-8 text-center text-gray-500">
+                                        <td colspan="9" class="px-4 py-8 text-center text-gray-500">
                                             조회 버튼을 클릭하여 데이터를 확인하세요
                                         </td>
                                     </tr>
@@ -918,7 +927,7 @@ app.get('/', (c) => {
             if (records.length === 0) {
                 tableBody.innerHTML = \`
                     <tr>
-                        <td colspan="8" class="px-4 py-8 text-center text-gray-500">
+                        <td colspan="9" class="px-4 py-8 text-center text-gray-500">
                             조회된 데이터가 없습니다
                         </td>
                     </tr>
@@ -974,7 +983,10 @@ app.get('/', (c) => {
                 }).join('') || '-';
                 
                 return \`
-                    <tr class="border-b hover:bg-gray-50">
+                    <tr class="border-b hover:bg-gray-50 emr-row" data-id="\${record.id}">
+                        <td class="px-4 py-3 text-center">
+                            <input type="checkbox" class="emr-checkbox w-4 h-4 cursor-pointer" value="\${record.id}">
+                        </td>
                         <td class="px-4 py-3">\${record.branch_name}</td>
                         <td class="px-4 py-3">\${record.patient_name}</td>
                         <td class="px-4 py-3">\${record.chart_number}</td>
@@ -991,6 +1003,12 @@ app.get('/', (c) => {
                     </tr>
                 \`;
             }).join('');
+            
+            // EMR 체크박스 이벤트 리스너 추가
+            updateEmrSelectedCount();
+            document.querySelectorAll('.emr-checkbox').forEach(checkbox => {
+                checkbox.addEventListener('change', updateEmrSelectedCount);
+            });
         }
 
         // 개별 레코드 삭제
@@ -1011,18 +1029,34 @@ app.get('/', (c) => {
             }
         }
 
-        // 조회 결과 전체 삭제
+        // EMR 전체 선택
+        document.getElementById('selectAllEmr').addEventListener('change', function() {
+            const checkboxes = document.querySelectorAll('.emr-checkbox');
+            checkboxes.forEach(cb => {
+                cb.checked = this.checked;
+            });
+            updateEmrSelectedCount();
+        });
+
+        // EMR 선택 개수 업데이트
+        function updateEmrSelectedCount() {
+            const selectedIds = Array.from(document.querySelectorAll('.emr-checkbox:checked')).map(cb => cb.value);
+            document.getElementById('emrSelectedCount').textContent = selectedIds.length;
+        }
+
+        // 조회 결과 선택 삭제
         document.getElementById('deleteAllBtn').addEventListener('click', async () => {
-            if (currentRecords.length === 0) {
-                alert('삭제할 레코드가 없습니다.');
+            const selectedIds = Array.from(document.querySelectorAll('.emr-checkbox:checked')).map(cb => parseInt(cb.value));
+            
+            if (selectedIds.length === 0) {
+                alert('삭제할 레코드를 선택해주세요.');
                 return;
             }
             
-            if (!confirm(\`조회된 \${currentRecords.length}건의 레코드를 모두 삭제하시겠습니까?\`)) return;
+            if (!confirm(\`선택한 \${selectedIds.length}건의 레코드를 삭제하시겠습니까?\`)) return;
             
             try {
-                const recordIds = currentRecords.map(r => r.id);
-                const response = await axios.post('/api/records/batch-delete', { record_ids: recordIds });
+                const response = await axios.post('/api/records/batch-delete', { record_ids: selectedIds });
                 
                 if (response.data.success) {
                     alert(response.data.message);
@@ -1183,7 +1217,30 @@ app.get('/', (c) => {
             
             let html = '';
             
-            for (let i = 1; i <= totalPages; i++) {
+            // << 버튼 (맨 처음)
+            html += \`
+                <button onclick="changePage(1)" 
+                        class="bg-white text-gray-700 hover:bg-gray-100 px-3 py-2 border rounded \${currentPage === 1 ? 'opacity-50 cursor-not-allowed' : ''}"
+                        \${currentPage === 1 ? 'disabled' : ''}>
+                    &lt;&lt;
+                </button>
+            \`;
+            
+            // < 버튼 (이전)
+            html += \`
+                <button onclick="changePage(\${currentPage - 1})" 
+                        class="bg-white text-gray-700 hover:bg-gray-100 px-3 py-2 border rounded \${currentPage === 1 ? 'opacity-50 cursor-not-allowed' : ''}"
+                        \${currentPage === 1 ? 'disabled' : ''}>
+                    &lt;
+                </button>
+            \`;
+            
+            // 페이지 번호 (최대 10개씩 표시)
+            const maxButtons = 10;
+            const startPage = Math.floor((currentPage - 1) / maxButtons) * maxButtons + 1;
+            const endPage = Math.min(startPage + maxButtons - 1, totalPages);
+            
+            for (let i = startPage; i <= endPage; i++) {
                 const activeClass = i === currentPage ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-100';
                 html += \`
                     <button onclick="changePage(\${i})" 
@@ -1192,6 +1249,24 @@ app.get('/', (c) => {
                     </button>
                 \`;
             }
+            
+            // > 버튼 (다음)
+            html += \`
+                <button onclick="changePage(\${currentPage + 1})" 
+                        class="bg-white text-gray-700 hover:bg-gray-100 px-3 py-2 border rounded \${currentPage === totalPages ? 'opacity-50 cursor-not-allowed' : ''}"
+                        \${currentPage === totalPages ? 'disabled' : ''}>
+                    &gt;
+                </button>
+            \`;
+            
+            // >> 버튼 (맨 끝)
+            html += \`
+                <button onclick="changePage(\${totalPages})" 
+                        class="bg-white text-gray-700 hover:bg-gray-100 px-3 py-2 border rounded \${currentPage === totalPages ? 'opacity-50 cursor-not-allowed' : ''}"
+                        \${currentPage === totalPages ? 'disabled' : ''}>
+                    &gt;&gt;
+                </button>
+            \`;
             
             pagination.innerHTML = html;
         }
