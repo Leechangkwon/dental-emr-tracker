@@ -677,9 +677,12 @@ app.get('/', (c) => {
                             </button>
                         </div>
 
-                        <div class="mb-2 text-sm text-gray-600">
+                        <div class="mb-4 text-sm text-gray-600">
                             조회 결과: <span id="ecountCount" class="font-bold">0</span>건 (총 <span id="ecountTotal" class="font-bold">0</span>건)
                         </div>
+
+                        <!-- 페이지네이션 (상단) -->
+                        <div id="ecountPaginationTop" class="mb-4 flex justify-center space-x-2"></div>
 
                         <div class="overflow-x-auto">
                             <table class="min-w-full bg-white border border-gray-300">
@@ -1208,9 +1211,11 @@ app.get('/', (c) => {
         }
 
         function displayPagination(totalPages) {
+            const paginationTop = document.getElementById('ecountPaginationTop');
             const pagination = document.getElementById('ecountPagination');
             
             if (totalPages <= 1) {
+                paginationTop.innerHTML = '';
                 pagination.innerHTML = '';
                 return;
             }
@@ -1219,7 +1224,7 @@ app.get('/', (c) => {
             
             // << 버튼 (맨 처음)
             html += \`
-                <button onclick="changePage(1)" 
+                <button onclick="window.changePage(1)" 
                         class="bg-white text-gray-700 hover:bg-gray-100 px-3 py-2 border rounded \${currentPage === 1 ? 'opacity-50 cursor-not-allowed' : ''}"
                         \${currentPage === 1 ? 'disabled' : ''}>
                     &lt;&lt;
@@ -1228,7 +1233,7 @@ app.get('/', (c) => {
             
             // < 버튼 (이전)
             html += \`
-                <button onclick="changePage(\${currentPage - 1})" 
+                <button onclick="window.changePage(\${currentPage - 1})" 
                         class="bg-white text-gray-700 hover:bg-gray-100 px-3 py-2 border rounded \${currentPage === 1 ? 'opacity-50 cursor-not-allowed' : ''}"
                         \${currentPage === 1 ? 'disabled' : ''}>
                     &lt;
@@ -1243,7 +1248,7 @@ app.get('/', (c) => {
             for (let i = startPage; i <= endPage; i++) {
                 const activeClass = i === currentPage ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-100';
                 html += \`
-                    <button onclick="changePage(\${i})" 
+                    <button onclick="window.changePage(\${i})" 
                             class="\${activeClass} px-4 py-2 border rounded">
                         \${i}
                     </button>
@@ -1252,7 +1257,7 @@ app.get('/', (c) => {
             
             // > 버튼 (다음)
             html += \`
-                <button onclick="changePage(\${currentPage + 1})" 
+                <button onclick="window.changePage(\${currentPage + 1})" 
                         class="bg-white text-gray-700 hover:bg-gray-100 px-3 py-2 border rounded \${currentPage === totalPages ? 'opacity-50 cursor-not-allowed' : ''}"
                         \${currentPage === totalPages ? 'disabled' : ''}>
                     &gt;
@@ -1261,13 +1266,14 @@ app.get('/', (c) => {
             
             // >> 버튼 (맨 끝)
             html += \`
-                <button onclick="changePage(\${totalPages})" 
+                <button onclick="window.changePage(\${totalPages})" 
                         class="bg-white text-gray-700 hover:bg-gray-100 px-3 py-2 border rounded \${currentPage === totalPages ? 'opacity-50 cursor-not-allowed' : ''}"
                         \${currentPage === totalPages ? 'disabled' : ''}>
                     &gt;&gt;
                 </button>
             \`;
             
+            paginationTop.innerHTML = html;
             pagination.innerHTML = html;
         }
 
@@ -1275,6 +1281,9 @@ app.get('/', (c) => {
             currentPage = page;
             searchEcountProducts();
         }
+        
+        // 전역으로 노출 (onclick 이벤트에서 사용하기 위해)
+        window.changePage = changePage;
 
         async function deleteEcountProduct(id) {
             if (!confirm('이 품목을 삭제하시겠습니까?')) return;
