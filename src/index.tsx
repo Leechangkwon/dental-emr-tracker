@@ -649,97 +649,37 @@ app.get('/api/statistics', async (c) => {
   try {
     const db = c.env.DB
     
-    // 필터 파라미터
-    const startDate = c.req.query('start_date')
-    const endDate = c.req.query('end_date')
-    const branchName = c.req.query('branch_name')
-    const category = c.req.query('category') // 'bone' | 'implant' | 'all'
-    
-    // WHERE 조건 구성
-    let dateCondition = ''
-    let branchCondition = ''
-    
-    if (startDate && endDate) {
-      dateCondition = ` AND tr.created_at BETWEEN '${startDate}' AND '${endDate} 23:59:59'`
-    }
-    
-    if (branchName && branchName !== 'all') {
-      branchCondition = ` AND tr.branch_name = '${branchName}'`
-    }
-    
     // 지점별 통계
-    let branchStatsQuery = `
+    const branchStats = await db.prepare(`
       SELECT 
         tr.branch_name,
         COUNT(DISTINCT tr.id) as record_count,
-        COALESCE(SUM(CASE WHEN bg.reference_tooth IS NULL THEN bg.quantity ELSE 0 END), 0) as bone_quantity,
-        COALESCE(SUM(CASE WHEN bg.reference_tooth IS NULL THEN bg.amount ELSE 0 END), 0) as bone_amount,
+        COALESCE(SUM(bg.quantity), 0) as bone_quantity,
+        COALESCE(SUM(bg.amount), 0) as bone_amount,
         COALESCE(SUM(im.quantity), 0) as implant_quantity,
         COALESCE(SUM(im.amount), 0) as implant_amount
       FROM treatment_records tr
-      LEFT JOIN bone_graft bg ON tr.id = bg.treatment_record_id
+      LEFT JOIN bone_graft bg ON tr.id = bg.treatment_record_id AND bg.reference_tooth IS NULL
       LEFT JOIN implant im ON tr.id = im.treatment_record_id
-      WHERE 1=1 ${dateCondition} ${branchCondition}
       GROUP BY tr.branch_name
       ORDER BY tr.branch_name
-    `
+    `).all()
     
-    const branchStats = await db.prepare(branchStatsQuery).all()
-    
-    // 거래처별 통계 (카테고리 필터 적용)
-    let supplierStatsQuery = ''
-    
-    if (category === 'bone') {
-      supplierStatsQuery = `
-        SELECT 
-          bg.supplier,
-          SUM(bg.quantity) as total_quantity,
-          SUM(bg.amount) as total_amount
-        FROM bone_graft bg
-        JOIN treatment_records tr ON bg.treatment_record_id = tr.id
-        WHERE bg.reference_tooth IS NULL AND bg.supplier IS NOT NULL AND bg.supplier != ''
-        ${dateCondition} ${branchCondition}
-        GROUP BY bg.supplier
-        ORDER BY total_amount DESC
-      `
-    } else if (category === 'implant') {
-      supplierStatsQuery = `
-        SELECT 
-          im.supplier,
-          SUM(im.quantity) as total_quantity,
-          SUM(im.amount) as total_amount
-        FROM implant im
-        JOIN treatment_records tr ON im.treatment_record_id = tr.id
-        WHERE im.supplier IS NOT NULL AND im.supplier != ''
-        ${dateCondition} ${branchCondition}
-        GROUP BY im.supplier
-        ORDER BY total_amount DESC
-      `
-    } else {
-      supplierStatsQuery = `
-        SELECT 
-          supplier,
-          SUM(quantity) as total_quantity,
-          SUM(amount) as total_amount
-        FROM (
-          SELECT bg.supplier, bg.quantity, bg.amount, tr.branch_name, tr.created_at
-          FROM bone_graft bg
-          JOIN treatment_records tr ON bg.treatment_record_id = tr.id
-          WHERE bg.reference_tooth IS NULL
-          UNION ALL
-          SELECT im.supplier, im.quantity, im.amount, tr.branch_name, tr.created_at
-          FROM implant im
-          JOIN treatment_records tr ON im.treatment_record_id = tr.id
-        )
-        WHERE supplier IS NOT NULL AND supplier != ''
-        ${dateCondition ? dateCondition.replace('tr.', '') : ''}
-        ${branchCondition ? branchCondition.replace('tr.', '') : ''}
-        GROUP BY supplier
-        ORDER BY total_amount DESC
-      `
-    }
-    
-    const supplierStats = await db.prepare(supplierStatsQuery).all()
+    // 거래처별 통계
+    const supplierStats = await db.prepare(`
+      SELECT 
+        supplier,
+        SUM(quantity) as total_quantity,
+        SUM(amount) as total_amount
+      FROM (
+        SELECT supplier, quantity, amount FROM bone_graft WHERE reference_tooth IS NULL
+        UNION ALL
+        SELECT supplier, quantity, amount FROM implant
+      )
+      WHERE supplier IS NOT NULL AND supplier != ''
+      GROUP BY supplier
+      ORDER BY total_amount DESC
+    `).all()
     
     return c.json({
       success: true,
@@ -1159,55 +1099,18 @@ app.get('/', (c) => {
 
                 <!-- 지점별 통계 섹션 -->
                 <div id="statsSection" class="hidden">
-                    <!-- 통계 필터 -->
-                    <div class="bg-white rounded-lg shadow-md p-6 mb-8">
-                        <h2 class="text-2xl font-bold text-gray-800 mb-4">
-                            <i class="fas fa-filter mr-2"></i>
-                            통계 필터
-                        </h2>
-                        
-                        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-2">시작일</label>
-                                <input type="date" id="statsStartDate" 
-                                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
-                            </div>
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-2">종료일</label>
-                                <input type="date" id="statsEndDate" 
-                                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
-                            </div>
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-2">지점</label>
-                                <select id="statsBranchSelect" 
-                                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
-                                    <option value="all">전체</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-2">분류</label>
-                                <select id="statsCategorySelect" 
-                                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
-                                    <option value="all">전체</option>
-                                    <option value="bone">뼈이식</option>
-                                    <option value="implant">임플란트</option>
-                                </select>
-                            </div>
-                        </div>
-                        
-                        <button id="loadBranchStatsBtn" 
-                                class="bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors">
-                            <i class="fas fa-search mr-2"></i>
-                            조회
-                        </button>
-                    </div>
-                    
                     <!-- 지점별 통계 -->
                     <div class="bg-white rounded-lg shadow-md p-6 mb-8">
                         <h2 class="text-2xl font-bold text-gray-800 mb-4">
                             <i class="fas fa-map-marker-alt mr-2"></i>
                             지점별 통계
                         </h2>
+                        
+                        <button id="loadBranchStatsBtn" 
+                                class="bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors mb-4">
+                            <i class="fas fa-sync mr-2"></i>
+                            통계 불러오기
+                        </button>
 
                         <div id="branchStatsResult" class="hidden">
                             <div class="mb-4 text-sm text-gray-600">
@@ -1230,7 +1133,7 @@ app.get('/', (c) => {
                                     <tbody id="branchStatsTableBody">
                                         <tr>
                                             <td colspan="7" class="px-4 py-8 text-center text-gray-500">
-                                                조회 버튼을 클릭하세요
+                                                통계 불러오기 버튼을 클릭하세요
                                             </td>
                                         </tr>
                                     </tbody>
@@ -1373,100 +1276,6 @@ app.get('/', (c) => {
         const mappingSection = document.getElementById('mappingSection');
         const statsSection = document.getElementById('statsSection');
 
-        // 매핑 테이블 변수 (메뉴 이벤트보다 먼저 선언)
-        let currentMappings = [];
-        let branchNames = [];
-        
-        // 매핑 테이블 로드 함수 (메뉴 이벤트보다 먼저 선언)
-        async function loadMappingTable() {
-            try {
-                const response = await axios.get('/api/mapping');
-                
-                if (response.data.success) {
-                    currentMappings = response.data.mappings;
-                    
-                    // 모든 지점 이름 추출
-                    const branchSet = new Set();
-                    currentMappings.forEach(mapping => {
-                        Object.keys(mapping.branch_codes).forEach(branch => branchSet.add(branch));
-                    });
-                    branchNames = Array.from(branchSet).sort();
-                    
-                    displayMappingTable();
-                }
-            } catch (err) {
-                console.error('매핑 조회 오류:', err);
-                alert('조회 중 오류가 발생했습니다: ' + err.message);
-            }
-        }
-        
-        // 테이블 표시 함수
-        function displayMappingTable() {
-            const header = document.getElementById('mappingTableHeader');
-            const tbody = document.getElementById('mappingTableBody');
-            
-            if (!header || !tbody) return;
-            
-            document.getElementById('mappingCount').textContent = currentMappings.length;
-            document.getElementById('branchCount').textContent = branchNames.length;
-            
-            if (currentMappings.length === 0) {
-                tbody.innerHTML = \`
-                    <tr>
-                        <td colspan="10" class="px-4 py-8 text-center text-gray-500">
-                            최신화 버튼을 클릭하여 품목명을 불러오세요
-                        </td>
-                    </tr>
-                \`;
-                return;
-            }
-            
-            // 헤더 생성
-            let headerHtml = \`
-                <th class="px-4 py-3 border-b text-left text-sm font-semibold text-gray-700 sticky left-0 bg-gray-100 z-10">
-                    DB 품목명
-                </th>
-            \`;
-            
-            branchNames.forEach(branch => {
-                headerHtml += \`
-                    <th class="px-4 py-3 border-b text-left text-sm font-semibold text-gray-700 whitespace-nowrap">
-                        \${branch}
-                        <button onclick="window.deleteBranch('\${branch}')" class="ml-2 text-red-600 hover:text-red-800">
-                            <i class="fas fa-times"></i>
-                        </button>
-                    </th>
-                \`;
-            });
-            
-            header.innerHTML = headerHtml;
-            
-            // 바디 생성
-            tbody.innerHTML = currentMappings.map((mapping, idx) => {
-                let rowHtml = \`
-                    <tr class="border-b hover:bg-gray-50">
-                        <td class="px-4 py-3 font-medium sticky left-0 bg-white">\${mapping.product_name}</td>
-                \`;
-                
-                branchNames.forEach(branch => {
-                    const code = mapping.branch_codes[branch] || '';
-                    rowHtml += \`
-                        <td class="px-4 py-3">
-                            <input type="text" 
-                                   value="\${code}" 
-                                   data-product="\${mapping.product_name}" 
-                                   data-branch="\${branch}"
-                                   class="mapping-input w-full px-2 py-1 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
-                                   placeholder="품목코드">
-                        </td>
-                    \`;
-                });
-                
-                rowHtml += \`</tr>\`;
-                return rowHtml;
-            }).join('');
-        }
-
         function switchMenu(activeMenu, activeSection) {
             [menuEmr, menuEcount, menuMapping, menuStats].forEach(menu => {
                 menu.classList.remove('bg-blue-100', 'text-blue-700', 'font-medium');
@@ -1483,18 +1292,8 @@ app.get('/', (c) => {
 
         menuEmr.addEventListener('click', () => switchMenu(menuEmr, emrSection));
         menuEcount.addEventListener('click', () => switchMenu(menuEcount, ecountSection));
-        menuMapping.addEventListener('click', () => {
-            switchMenu(menuMapping, mappingSection);
-            // 매핑 테이블이 비어있으면 자동 로드
-            if (currentMappings.length === 0) {
-                loadMappingTable();
-            }
-        });
-        menuStats.addEventListener('click', () => {
-            switchMenu(menuStats, statsSection);
-            // 지점 목록 로드
-            loadBranchList();
-        });
+        menuMapping.addEventListener('click', () => switchMenu(menuMapping, mappingSection));
+        menuStats.addEventListener('click', () => switchMenu(menuStats, statsSection));
 
         // ===== EMR 섹션 스크립트 =====
         
@@ -2218,6 +2017,9 @@ app.get('/', (c) => {
 
         // ===== 매핑 테이블 스크립트 =====
         
+        let currentMappings = [];
+        let branchNames = [];
+        
         // 최신화 버튼
         document.getElementById('refreshMappingBtn').addEventListener('click', async () => {
             try {
@@ -2233,6 +2035,93 @@ app.get('/', (c) => {
                 alert('최신화 중 오류가 발생했습니다: ' + err.message);
             }
         });
+        
+        // 매핑 테이블 로드
+        async function loadMappingTable() {
+            try {
+                const response = await axios.get('/api/mapping');
+                
+                if (response.data.success) {
+                    currentMappings = response.data.mappings;
+                    
+                    // 모든 지점 이름 추출
+                    const branchSet = new Set();
+                    currentMappings.forEach(mapping => {
+                        Object.keys(mapping.branch_codes).forEach(branch => branchSet.add(branch));
+                    });
+                    branchNames = Array.from(branchSet).sort();
+                    
+                    displayMappingTable();
+                }
+            } catch (err) {
+                alert('조회 중 오류가 발생했습니다: ' + err.message);
+            }
+        }
+        
+        // 테이블 표시
+        function displayMappingTable() {
+            const header = document.getElementById('mappingTableHeader');
+            const tbody = document.getElementById('mappingTableBody');
+            
+            document.getElementById('mappingCount').textContent = currentMappings.length;
+            document.getElementById('branchCount').textContent = branchNames.length;
+            
+            if (currentMappings.length === 0) {
+                tbody.innerHTML = \`
+                    <tr>
+                        <td colspan="\${branchNames.length + 1}" class="px-4 py-8 text-center text-gray-500">
+                            조회된 데이터가 없습니다
+                        </td>
+                    </tr>
+                \`;
+                return;
+            }
+            
+            // 헤더 생성
+            let headerHtml = \`
+                <th class="px-4 py-3 border-b text-left text-sm font-semibold text-gray-700 sticky left-0 bg-gray-100 z-10">
+                    DB 품목명
+                </th>
+            \`;
+            
+            branchNames.forEach(branch => {
+                headerHtml += \`
+                    <th class="px-4 py-3 border-b text-left text-sm font-semibold text-gray-700 whitespace-nowrap">
+                        \${branch}
+                        <button onclick="window.deleteBranch('\${branch}')" class="ml-2 text-red-600 hover:text-red-800">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </th>
+                \`;
+            });
+            
+            header.innerHTML = headerHtml;
+            
+            // 바디 생성
+            tbody.innerHTML = currentMappings.map((mapping, idx) => {
+                let rowHtml = \`
+                    <tr class="border-b hover:bg-gray-50">
+                        <td class="px-4 py-3 font-medium sticky left-0 bg-white">\${mapping.product_name}</td>
+                \`;
+                
+                branchNames.forEach(branch => {
+                    const code = mapping.branch_codes[branch] || '';
+                    rowHtml += \`
+                        <td class="px-4 py-3">
+                            <input type="text" 
+                                   value="\${code}" 
+                                   data-product="\${mapping.product_name}" 
+                                   data-branch="\${branch}"
+                                   class="mapping-input w-full px-2 py-1 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+                                   placeholder="품목코드">
+                        </td>
+                    \`;
+                });
+                
+                rowHtml += '</tr>';
+                return rowHtml;
+            }).join('');
+        }
         
         // 지점 추가
         document.getElementById('addBranchBtn').addEventListener('click', () => {
@@ -2339,42 +2228,10 @@ app.get('/', (c) => {
 
         // ===== 통계 섹션 스크립트 =====
         
-        // 지점 목록 로드
-        async function loadBranchList() {
-            try {
-                const response = await axios.get('/api/records');
-                if (response.data.success) {
-                    const branches = new Set();
-                    response.data.data.forEach(record => {
-                        if (record.branch_name) branches.add(record.branch_name);
-                    });
-                    
-                    const select = document.getElementById('statsBranchSelect');
-                    select.innerHTML = '<option value="all">전체</option>';
-                    Array.from(branches).sort().forEach(branch => {
-                        select.innerHTML += \`<option value="\${branch}">\${branch}</option>\`;
-                    });
-                }
-            } catch (err) {
-                console.error('지점 목록 로드 오류:', err);
-            }
-        }
-        
         // 통계 불러오기
         document.getElementById('loadBranchStatsBtn').addEventListener('click', async () => {
             try {
-                const startDate = document.getElementById('statsStartDate').value;
-                const endDate = document.getElementById('statsEndDate').value;
-                const branchName = document.getElementById('statsBranchSelect').value;
-                const category = document.getElementById('statsCategorySelect').value;
-                
-                let url = '/api/statistics?';
-                if (startDate) url += \`start_date=\${startDate}&\`;
-                if (endDate) url += \`end_date=\${endDate}&\`;
-                if (branchName && branchName !== 'all') url += \`branch_name=\${branchName}&\`;
-                if (category && category !== 'all') url += \`category=\${category}&\`;
-                
-                const response = await axios.get(url);
+                const response = await axios.get('/api/statistics');
                 
                 if (response.data.success) {
                     displayBranchStats(response.data.branchStats);
