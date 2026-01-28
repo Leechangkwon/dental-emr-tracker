@@ -382,6 +382,149 @@ app.delete('/api/ecount/products/:id', async (c) => {
   }
 })
 
+// ===== 매핑 테이블 API =====
+
+// 최신화: EMR에서 사용된 모든 품목명 가져오기
+app.post('/api/mapping/refresh', async (c) => {
+  try {
+    const db = c.env.DB
+    
+    // 뼈이식과 임플란트에서 사용된 모든 고유 품목명 가져오기
+    const boneQuery = db.prepare(`SELECT DISTINCT product_name FROM bone_graft WHERE product_name IS NOT NULL AND product_name != '' ORDER BY product_name`)
+    const boneProducts = await boneQuery.all()
+    
+    const implantQuery = db.prepare(`SELECT DISTINCT product_name FROM implant WHERE product_name IS NOT NULL AND product_name != '' ORDER BY product_name`)
+    const implantProducts = await implantQuery.all()
+    
+    // 중복 제거하고 병합
+    const allProducts = new Set()
+    if (boneProducts.results) {
+      boneProducts.results.forEach((row) => {
+        if (row.product_name) allProducts.add(row.product_name)
+      })
+    }
+    if (implantProducts.results) {
+      implantProducts.results.forEach((row) => {
+        if (row.product_name) allProducts.add(row.product_name)
+      })
+    }
+    
+    // 기존 매핑 테이블 조회
+    const existingMappings = await db.prepare(`SELECT product_name FROM product_mapping`).all()
+    
+    const existingNames = new Set()
+    if (existingMappings.results) {
+      existingMappings.results.forEach((row) => {
+        if (row.product_name) existingNames.add(row.product_name)
+      })
+    }
+    
+    // 신규 품목만 추가
+    let newCount = 0
+    for (const productName of allProducts) {
+      if (!existingNames.has(productName)) {
+        await db.prepare(`INSERT INTO product_mapping (product_name, branch_codes) VALUES (?, ?)`).bind(productName, '{}').run()
+        newCount++
+      }
+    }
+    
+    return c.json({
+      success: true,
+      message: `${newCount}개의 신규 품목이 추가되었습니다.`,
+      newCount,
+      totalCount: allProducts.size
+    })
+  } catch (err) {
+    console.error('Mapping refresh error:', err)
+    return c.json({ 
+      success: false, 
+      message: `최신화 중 오류가 발생했습니다: ${err}` 
+    }, 500)
+  }
+})
+
+// 매핑 테이블 조회
+app.get('/api/mapping', async (c) => {
+  try {
+    const db = c.env.DB
+    
+    const result = await db.prepare(`
+      SELECT * FROM product_mapping ORDER BY product_name
+    `).all()
+    
+    // JSON 파싱
+    const mappings = result.results.map((row: any) => ({
+      ...row,
+      branch_codes: row.branch_codes ? JSON.parse(row.branch_codes) : {}
+    }))
+    
+    return c.json({
+      success: true,
+      mappings,
+      count: mappings.length
+    })
+  } catch (err) {
+    console.error('Mapping query error:', err)
+    return c.json({ 
+      success: false, 
+      message: `조회 중 오류가 발생했습니다: ${err}` 
+    }, 500)
+  }
+})
+
+// 매핑 저장/업데이트
+app.post('/api/mapping/save', async (c) => {
+  try {
+    const db = c.env.DB
+    const { product_name, branch_codes } = await c.req.json()
+    
+    await db.prepare(`
+      INSERT INTO product_mapping (product_name, branch_codes)
+      VALUES (?, ?)
+      ON CONFLICT(product_name) DO UPDATE SET
+        branch_codes = excluded.branch_codes,
+        updated_at = CURRENT_TIMESTAMP
+    `).bind(product_name, JSON.stringify(branch_codes)).run()
+    
+    return c.json({ success: true, message: '저장되었습니다.' })
+  } catch (err) {
+    console.error('Mapping save error:', err)
+    return c.json({ 
+      success: false, 
+      message: `저장 중 오류가 발생했습니다: ${err}` 
+    }, 500)
+  }
+})
+
+// 매핑 일괄 저장
+app.post('/api/mapping/batch-save', async (c) => {
+  try {
+    const db = c.env.DB
+    const { mappings } = await c.req.json()
+    
+    for (const mapping of mappings) {
+      await db.prepare(`
+        INSERT INTO product_mapping (product_name, branch_codes)
+        VALUES (?, ?)
+        ON CONFLICT(product_name) DO UPDATE SET
+          branch_codes = excluded.branch_codes,
+          updated_at = CURRENT_TIMESTAMP
+      `).bind(mapping.product_name, JSON.stringify(mapping.branch_codes)).run()
+    }
+    
+    return c.json({ 
+      success: true, 
+      message: `${mappings.length}건이 저장되었습니다.` 
+    })
+  } catch (err) {
+    console.error('Mapping batch save error:', err)
+    return c.json({ 
+      success: false, 
+      message: `저장 중 오류가 발생했습니다: ${err}` 
+    }, 500)
+  }
+})
+
 // ===== 메인 페이지 =====
 app.get('/', (c) => {
   return c.html(`
@@ -733,27 +876,39 @@ app.get('/', (c) => {
                                 <i class="fas fa-sync mr-2"></i>
                                 최신화 (신규 품목명 추가)
                             </button>
-                            <button id="downloadMappingBtn" 
+                            <button id="addBranchBtn" 
+                                    class="bg-indigo-600 text-white py-2 px-4 rounded-lg hover:bg-indigo-700 transition-colors">
+                                <i class="fas fa-plus mr-2"></i>
+                                지점 추가
+                            </button>
+                            <button id="saveMappingBtn" 
                                     class="bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors">
+                                <i class="fas fa-save mr-2"></i>
+                                저장
+                            </button>
+                            <button id="downloadMappingBtn" 
+                                    class="bg-teal-600 text-white py-2 px-4 rounded-lg hover:bg-teal-700 transition-colors">
                                 <i class="fas fa-download mr-2"></i>
-                                다운로드 (CSV)
+                                다운로드 (엑셀)
                             </button>
                             <label class="bg-purple-600 text-white py-2 px-4 rounded-lg hover:bg-purple-700 transition-colors cursor-pointer">
                                 <i class="fas fa-upload mr-2"></i>
-                                업로드 (CSV)
-                                <input type="file" id="mappingUploadFile" accept=".csv" class="hidden">
+                                업로드 (엑셀)
+                                <input type="file" id="mappingUploadFile" accept=".xlsx,.xls" class="hidden">
                             </label>
                         </div>
 
                         <div class="mb-2 text-sm text-gray-600">
-                            총 <span id="mappingCount" class="font-bold">0</span>개 품목
+                            총 <span id="mappingCount" class="font-bold">0</span>개 품목 | 지점 <span id="branchCount" class="font-bold">0</span>개
                         </div>
 
                         <div class="overflow-x-auto">
-                            <table class="min-w-full bg-white border border-gray-300">
+                            <table id="mappingTable" class="min-w-full bg-white border border-gray-300">
                                 <thead class="bg-gray-100">
                                     <tr id="mappingTableHeader">
-                                        <th class="px-4 py-3 border-b text-left text-sm font-semibold text-gray-700">DB 품목명</th>
+                                        <th class="px-4 py-3 border-b text-left text-sm font-semibold text-gray-700 sticky left-0 bg-gray-100 z-10">
+                                            DB 품목명
+                                        </th>
                                     </tr>
                                 </thead>
                                 <tbody id="mappingTableBody">
@@ -1499,6 +1654,217 @@ app.get('/', (c) => {
                 }
             } catch (err) {
                 alert('수정 중 오류가 발생했습니다: ' + err.message);
+            }
+        });
+
+        // ===== 매핑 테이블 스크립트 =====
+        
+        let currentMappings = [];
+        let branchNames = [];
+        
+        // 최신화 버튼
+        document.getElementById('refreshMappingBtn').addEventListener('click', async () => {
+            try {
+                const response = await axios.post('/api/mapping/refresh');
+                
+                if (response.data.success) {
+                    alert(response.data.message);
+                    loadMappingTable();
+                } else {
+                    alert('최신화 실패: ' + response.data.message);
+                }
+            } catch (err) {
+                alert('최신화 중 오류가 발생했습니다: ' + err.message);
+            }
+        });
+        
+        // 매핑 테이블 로드
+        async function loadMappingTable() {
+            try {
+                const response = await axios.get('/api/mapping');
+                
+                if (response.data.success) {
+                    currentMappings = response.data.mappings;
+                    
+                    // 모든 지점 이름 추출
+                    const branchSet = new Set();
+                    currentMappings.forEach(mapping => {
+                        Object.keys(mapping.branch_codes).forEach(branch => branchSet.add(branch));
+                    });
+                    branchNames = Array.from(branchSet).sort();
+                    
+                    displayMappingTable();
+                }
+            } catch (err) {
+                alert('조회 중 오류가 발생했습니다: ' + err.message);
+            }
+        }
+        
+        // 테이블 표시
+        function displayMappingTable() {
+            const header = document.getElementById('mappingTableHeader');
+            const tbody = document.getElementById('mappingTableBody');
+            
+            document.getElementById('mappingCount').textContent = currentMappings.length;
+            document.getElementById('branchCount').textContent = branchNames.length;
+            
+            if (currentMappings.length === 0) {
+                tbody.innerHTML = \`
+                    <tr>
+                        <td colspan="\${branchNames.length + 1}" class="px-4 py-8 text-center text-gray-500">
+                            조회된 데이터가 없습니다
+                        </td>
+                    </tr>
+                \`;
+                return;
+            }
+            
+            // 헤더 생성
+            let headerHtml = \`
+                <th class="px-4 py-3 border-b text-left text-sm font-semibold text-gray-700 sticky left-0 bg-gray-100 z-10">
+                    DB 품목명
+                </th>
+            \`;
+            
+            branchNames.forEach(branch => {
+                headerHtml += \`
+                    <th class="px-4 py-3 border-b text-left text-sm font-semibold text-gray-700 whitespace-nowrap">
+                        \${branch}
+                        <button onclick="window.deleteBranch('\${branch}')" class="ml-2 text-red-600 hover:text-red-800">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </th>
+                \`;
+            });
+            
+            header.innerHTML = headerHtml;
+            
+            // 바디 생성
+            tbody.innerHTML = currentMappings.map((mapping, idx) => {
+                let rowHtml = \`
+                    <tr class="border-b hover:bg-gray-50">
+                        <td class="px-4 py-3 font-medium sticky left-0 bg-white">\${mapping.product_name}</td>
+                \`;
+                
+                branchNames.forEach(branch => {
+                    const code = mapping.branch_codes[branch] || '';
+                    rowHtml += \`
+                        <td class="px-4 py-3">
+                            <input type="text" 
+                                   value="\${code}" 
+                                   data-product="\${mapping.product_name}" 
+                                   data-branch="\${branch}"
+                                   class="mapping-input w-full px-2 py-1 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+                                   placeholder="품목코드">
+                        </td>
+                    \`;
+                });
+                
+                rowHtml += '</tr>';
+                return rowHtml;
+            }).join('');
+        }
+        
+        // 지점 추가
+        document.getElementById('addBranchBtn').addEventListener('click', () => {
+            const branchName = prompt('지점명을 입력하세요:');
+            if (branchName && branchName.trim()) {
+                if (branchNames.includes(branchName.trim())) {
+                    alert('이미 존재하는 지점명입니다.');
+                    return;
+                }
+                branchNames.push(branchName.trim());
+                branchNames.sort();
+                displayMappingTable();
+            }
+        });
+        
+        // 지점 삭제
+        window.deleteBranch = function(branchName) {
+            if (!confirm(\`"\${branchName}" 지점을 삭제하시겠습니까?\`)) return;
+            
+            branchNames = branchNames.filter(b => b !== branchName);
+            currentMappings.forEach(mapping => {
+                delete mapping.branch_codes[branchName];
+            });
+            displayMappingTable();
+        };
+        
+        // 저장
+        document.getElementById('saveMappingBtn').addEventListener('click', async () => {
+            try {
+                // 입력 필드에서 데이터 수집
+                const inputs = document.querySelectorAll('.mapping-input');
+                
+                inputs.forEach(input => {
+                    const productName = input.getAttribute('data-product');
+                    const branchName = input.getAttribute('data-branch');
+                    const code = input.value.trim();
+                    
+                    const mapping = currentMappings.find(m => m.product_name === productName);
+                    if (mapping) {
+                        if (code) {
+                            mapping.branch_codes[branchName] = code;
+                        } else {
+                            delete mapping.branch_codes[branchName];
+                        }
+                    }
+                });
+                
+                // 서버에 저장
+                const response = await axios.post('/api/mapping/batch-save', {
+                    mappings: currentMappings
+                });
+                
+                if (response.data.success) {
+                    alert(response.data.message);
+                } else {
+                    alert('저장 실패: ' + response.data.message);
+                }
+            } catch (err) {
+                alert('저장 중 오류가 발생했습니다: ' + err.message);
+            }
+        });
+        
+        // 엑셀 다운로드 (SheetJS 사용)
+        document.getElementById('downloadMappingBtn').addEventListener('click', async () => {
+            try {
+                // 데이터 준비
+                const data = [['DB 품목명', ...branchNames]];
+                
+                currentMappings.forEach(mapping => {
+                    const row = [mapping.product_name];
+                    branchNames.forEach(branch => {
+                        row.push(mapping.branch_codes[branch] || '');
+                    });
+                    data.push(row);
+                });
+                
+                // CSV 생성 (임시로 - 나중에 엑셀로 변경)
+                const csvContent = data.map(row => row.join(',')).join('\\n');
+                const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(blob);
+                link.download = \`매핑테이블_\${new Date().toISOString().split('T')[0]}.csv\`;
+                link.click();
+                
+                alert('다운로드가 완료되었습니다.');
+            } catch (err) {
+                alert('다운로드 중 오류가 발생했습니다: ' + err.message);
+            }
+        });
+        
+        // 엑셀 업로드
+        document.getElementById('mappingUploadFile').addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            try {
+                alert('엑셀 업로드 기능은 추후 구현 예정입니다. (SheetJS 라이브러리 필요)');
+                e.target.value = '';
+            } catch (err) {
+                alert('업로드 중 오류가 발생했습니다: ' + err.message);
+                e.target.value = '';
             }
         });
     </script>
