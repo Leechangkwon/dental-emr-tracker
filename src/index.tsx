@@ -1362,6 +1362,7 @@ app.get('/', (c) => {
 
     <script src="https://cdn.jsdelivr.net/npm/axios@1.6.0/dist/axios.min.js"></script>
     <script>
+        document.addEventListener('DOMContentLoaded', function() {
         // ===== 메뉴 전환 =====
         const menuEmr = document.getElementById('menuEmr');
         const menuEcount = document.getElementById('menuEcount');
@@ -2233,93 +2234,6 @@ app.get('/', (c) => {
             }
         });
         
-        // 매핑 테이블 로드
-        async function loadMappingTable() {
-            try {
-                const response = await axios.get('/api/mapping');
-                
-                if (response.data.success) {
-                    currentMappings = response.data.mappings;
-                    
-                    // 모든 지점 이름 추출
-                    const branchSet = new Set();
-                    currentMappings.forEach(mapping => {
-                        Object.keys(mapping.branch_codes).forEach(branch => branchSet.add(branch));
-                    });
-                    branchNames = Array.from(branchSet).sort();
-                    
-                    displayMappingTable();
-                }
-            } catch (err) {
-                alert('조회 중 오류가 발생했습니다: ' + err.message);
-            }
-        }
-        
-        // 테이블 표시
-        function displayMappingTable() {
-            const header = document.getElementById('mappingTableHeader');
-            const tbody = document.getElementById('mappingTableBody');
-            
-            document.getElementById('mappingCount').textContent = currentMappings.length;
-            document.getElementById('branchCount').textContent = branchNames.length;
-            
-            if (currentMappings.length === 0) {
-                tbody.innerHTML = \`
-                    <tr>
-                        <td colspan="\${branchNames.length + 1}" class="px-4 py-8 text-center text-gray-500">
-                            조회된 데이터가 없습니다
-                        </td>
-                    </tr>
-                \`;
-                return;
-            }
-            
-            // 헤더 생성
-            let headerHtml = \`
-                <th class="px-4 py-3 border-b text-left text-sm font-semibold text-gray-700 sticky left-0 bg-gray-100 z-10">
-                    DB 품목명
-                </th>
-            \`;
-            
-            branchNames.forEach(branch => {
-                headerHtml += \`
-                    <th class="px-4 py-3 border-b text-left text-sm font-semibold text-gray-700 whitespace-nowrap">
-                        \${branch}
-                        <button onclick="window.deleteBranch('\${branch}')" class="ml-2 text-red-600 hover:text-red-800">
-                            <i class="fas fa-times"></i>
-                        </button>
-                    </th>
-                \`;
-            });
-            
-            header.innerHTML = headerHtml;
-            
-            // 바디 생성
-            tbody.innerHTML = currentMappings.map((mapping, idx) => {
-                let rowHtml = \`
-                    <tr class="border-b hover:bg-gray-50">
-                        <td class="px-4 py-3 font-medium sticky left-0 bg-white">\${mapping.product_name}</td>
-                \`;
-                
-                branchNames.forEach(branch => {
-                    const code = mapping.branch_codes[branch] || '';
-                    rowHtml += \`
-                        <td class="px-4 py-3">
-                            <input type="text" 
-                                   value="\${code}" 
-                                   data-product="\${mapping.product_name}" 
-                                   data-branch="\${branch}"
-                                   class="mapping-input w-full px-2 py-1 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
-                                   placeholder="품목코드">
-                        </td>
-                    \`;
-                });
-                
-                rowHtml += '</tr>';
-                return rowHtml;
-            }).join('');
-        }
-        
         // 지점 추가
         document.getElementById('addBranchBtn').addEventListener('click', () => {
             const branchName = prompt('지점명을 입력하세요:');
@@ -2580,6 +2494,8 @@ app.get('/', (c) => {
                 </tr>
             \`;
         }
+        
+        }); // DOMContentLoaded 끝
     </script>
 </body>
 </html>
